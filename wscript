@@ -289,7 +289,7 @@ def configure(conf):
 
 	# indicate if we are packaging for Linux/BSD
 	if not conf.options.WIN_INSTALL and conf.env.DEST_OS not in ['win32', 'darwin', 'android']:
-		conf.env.LIBDIR = conf.env.BINDIR = '${PREFIX}/lib/xash3d'
+		conf.env.LIBDIR = conf.env.BINDIR = '${PREFIX}'
 		conf.env.SHAREDIR = '${PREFIX}/share/xash3d'
 	else:
 		conf.env.SHAREDIR = conf.env.LIBDIR = conf.env.BINDIR = conf.env.PREFIX
