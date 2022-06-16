@@ -733,7 +733,8 @@ sv_client_t *SV_ClientByName( const char *name )
 	sv_client_t *cl;
 	int i;
 
-	ASSERT( name && *name );
+	if( !COM_CheckString( name ))
+		return NULL;
 
 	for( i = 0, cl = svs.clients; i < svgame.globals->maxClients; i++, cl++ )
 	{
@@ -843,6 +844,8 @@ void SV_Info( netadr_t from )
 			if( svs.clients[i].state >= cs_connected )
 				count++;
 
+		// a1ba: send protocol version to distinguish old engine and new
+		Info_SetValueForKey( string, "p", va( "%i", PROTOCOL_VERSION ), MAX_INFO_STRING );
 		Info_SetValueForKey( string, "host", hostname.string, MAX_INFO_STRING );
 		Info_SetValueForKey( string, "map", sv.name, MAX_INFO_STRING );
 		Info_SetValueForKey( string, "dm", va( "%i", (int)svgame.globals->deathmatch ), MAX_INFO_STRING );
@@ -2101,7 +2104,6 @@ ucmd_t ucmds[] =
 { "spawn", SV_Spawn_f },
 { "pause", SV_Pause_f },
 { "noclip", SV_Noclip_f },
-{ "log", SV_ServerLog_f },
 { "setinfo", SV_SetInfo_f },
 { "sendres", SV_SendRes_f },
 { "notarget", SV_Notarget_f },

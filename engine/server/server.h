@@ -325,6 +325,7 @@ typedef struct
 	qboolean		msg_started;		// to avoid recursive included messages
 	edict_t		*msg_ent;			// user message member entity
 	vec3_t		msg_org;			// user message member origin
+	qboolean	msg_trace;		// trace this message
 
 	void		*hInstance;		// pointer to game.dll
 	qboolean		config_executed;		// should to execute config.cfg once time to restore FCVAR_ARCHIVE that specified in hl.dll
@@ -352,6 +353,7 @@ typedef struct
 typedef struct
 {
 	qboolean		initialized;		// sv_init has completed
+	qboolean	game_library_loaded;	// is game library loaded in SV_InitGame
 	double		timestart;		// just for profiling
 
 	int		maxclients;		// server max clients
@@ -386,6 +388,8 @@ extern	areanode_t	sv_areanodes[];		// AABB dynamic tree
 
 extern convar_t		mp_logecho;
 extern convar_t		mp_logfile;
+extern convar_t		sv_log_onefile;
+extern convar_t		sv_log_singleplayer;
 extern convar_t		sv_unlag;
 extern convar_t		sv_maxunlag;
 extern convar_t		sv_unlagpush;
@@ -428,6 +432,7 @@ extern convar_t		sv_skyvec_z;
 extern convar_t		sv_consistency;
 extern convar_t		sv_password;
 extern convar_t		sv_uploadmax;
+extern convar_t		sv_trace_messages;
 extern convar_t		deathmatch;
 extern convar_t		hostname;
 extern convar_t		skill;
@@ -465,9 +470,9 @@ void SV_SendResource( resource_t *pResource, sizebuf_t *msg );
 void SV_SendResourceList( sv_client_t *cl );
 void SV_AddToMaster( netadr_t from, sizebuf_t *msg );
 qboolean SV_ProcessUserAgent( netadr_t from, const char *useragent );
+int SV_GetConnectedClientsCount( int *bots );
 void Host_SetServerState( int state );
 qboolean SV_IsSimulating( void );
-qboolean SV_InitGame( void );
 void SV_FreeClients( void );
 void Master_Add( void );
 void Master_Heartbeat( void );
@@ -476,6 +481,7 @@ void Master_Packet( void );
 //
 // sv_init.c
 //
+qboolean SV_InitGame( void );
 void SV_ActivateServer( int runPhysics );
 qboolean SV_SpawnServer( const char *server, const char *startspot, qboolean background );
 model_t *SV_ModelHandle( int modelindex );
@@ -622,7 +628,6 @@ void SV_StartSound( edict_t *ent, int chan, const char *sample, float vol, float
 edict_t *SV_FindGlobalEntity( string_t classname, string_t globalname );
 qboolean SV_CreateStaticEntity( struct sizebuf_s *msg, int index );
 void SV_SendUserReg( sizebuf_t *msg, sv_user_message_t *user );
-edict_t* pfnPEntityOfEntIndex( int iEntIndex );
 int pfnIndexOfEdict( const edict_t *pEdict );
 void pfnWriteBytes( const byte *bytes, int count );
 void SV_UpdateBaseVelocity( edict_t *ent );
@@ -643,7 +648,8 @@ char *SV_Localinfo( void );
 void Log_Close( void );
 void Log_Open( void );
 void Log_PrintServerVars( void );
-qboolean SV_ServerLog_f( sv_client_t *cl );
+void SV_ServerLog_f( void );
+void SV_SetLogAddress_f( void );
 
 //
 // sv_save.c
