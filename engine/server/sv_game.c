@@ -62,16 +62,23 @@ qboolean SV_CheckEdict( const edict_t *e, const char *file, const int line )
 
 static edict_t *SV_PEntityOfEntIndex( const int iEntIndex, const qboolean allentities )
 {
-	edict_t *pEdict = EDICT_NUM( iEntIndex );
-	qboolean player = allentities ? iEntIndex <= svs.maxclients : iEntIndex < svs.maxclients;
+	if( iEntIndex >= 0 && iEntIndex < GI->max_edicts )
+	{
+		edict_t *pEdict = EDICT_NUM( iEntIndex );
+		qboolean player = allentities ? iEntIndex <= svs.maxclients : iEntIndex < svs.maxclients;
 
-	if( !SV_IsValidEdict( pEdict ))
-		return NULL;
+		if( !iEntIndex || FBitSet( host.features, ENGINE_QUAKE_COMPATIBLE ))
+			return pEdict; // just get access to array
 
-	if( !player && !pEdict->pvPrivateData )
-		return NULL;
+		if( SV_IsValidEdict( pEdict ) && pEdict->pvPrivateData )
+			return pEdict;
 
-	return pEdict;
+		// g-cont: world and clients can be accessed even without private data
+		if( SV_IsValidEdict( pEdict ) && player )
+			return pEdict;
+	}
+
+	return NULL;
 }
 
 
@@ -2673,7 +2680,7 @@ void GAME_EXPORT pfnMessageEnd( void )
 				return;
 			}
 
-			sv.multicast.pData[svgame.msg_size_index] = svgame.msg_realsize;
+			*(word *)&sv.multicast.pData[svgame.msg_size_index] = svgame.msg_realsize;
 		}
 	}
 	else if( svgame.msg[svgame.msg_index].size != -1 )
@@ -3368,7 +3375,9 @@ pfnPEntityOfEntIndex
 static edict_t *pfnPEntityOfEntIndex( int iEntIndex )
 {
 	// have to be bug-compatible with GoldSrc in this function
-	return SV_PEntityOfEntIndex( iEntIndex, false );
+	if( host.bugcomp == BUGCOMP_GOLDSRC )
+		return SV_PEntityOfEntIndex( iEntIndex, false );
+	return SV_PEntityOfEntIndex( iEntIndex, true );
 }
 
 /*

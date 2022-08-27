@@ -30,6 +30,7 @@ typedef int		HIMAGE;		// handle to a graphic
 #define PIC_NEAREST		(1<<0)		// disable texfilter
 #define PIC_KEEP_SOURCE	(1<<1)		// some images keep source
 #define PIC_NOFLIP_TGA	(1<<2)		// Steam background completely ignore tga attribute 0x20
+#define PIC_EXPAND_SOURCE (1<<3)		// don't keep as 8-bit source, expand to RGBA
 
 // flags for COM_ParseFileSafe
 #define PFILE_IGNOREBRACKET (1<<0)
@@ -52,11 +53,6 @@ typedef struct ui_globalvars_s
 } ui_globalvars_t;
 
 struct ref_viewpass_s;
-
-#if __GNUC__ == 3
-#undef NORETURN
-#define NORETURN
-#endif // GCC 3.x have problems with noreturn attribute on function pointer
 
 typedef struct ui_enginefuncs_s
 {
@@ -121,7 +117,7 @@ typedef struct ui_enginefuncs_s
 	int	(*CL_CreateVisibleEntity)( int type, struct cl_entity_s *ent );
 
 	// misc handlers
-	void	(*pfnHostError)( const char *szFmt, ... ) _format( 1 ) NORETURN;
+	void	(*pfnHostError)( const char *szFmt, ... ) _format( 1 );
 	int	(*pfnFileExists)( const char *filename, int gamedironly );
 	void	(*pfnGetGameDir)( char *szGetGameDir );
 

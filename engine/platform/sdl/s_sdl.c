@@ -18,6 +18,7 @@ GNU General Public License for more details.
 #if XASH_SOUND == SOUND_SDL
 
 #include "sound.h"
+#include "voice.h"
 
 #include <SDL.h>
 
@@ -43,6 +44,9 @@ so it can unlock and free the data block after it has been played.
 =======================================================================
 */
 static int sdl_dev;
+static SDL_AudioDeviceID in_dev = 0;
+static SDL_AudioFormat sdl_format;
+static char sdl_backend_name[32];
 
 //static qboolean	snd_firsttime = true;
 //static qboolean	primary_format_set;
@@ -133,9 +137,12 @@ qboolean SNDDMA_Init( void )
 	dma.buffer          = Z_Calloc( dma.samples * 2 );
 	dma.samplepos       = 0;
 
-	Con_Printf( "Using SDL audio driver: %s @ %d Hz\n", SDL_GetCurrentAudioDriver( ), obtained.freq );
+	sdl_format = obtained.format;
 
+	Con_Printf( "Using SDL audio driver: %s @ %d Hz\n", SDL_GetCurrentAudioDriver( ), obtained.freq );
+	Q_snprintf( sdl_backend_name, sizeof( sdl_backend_name ), "SDL (%s)", SDL_GetCurrentAudioDriver( ));
 	dma.initialized = true;
+	dma.backendName = sdl_backend_name;
 
 	SNDDMA_Activate( true );
 
@@ -220,4 +227,84 @@ void SNDDMA_Activate( qboolean active )
 
 	SDL_PauseAudioDevice( sdl_dev, !active );
 }
+
+/*
+===========
+SDL_SoundInputCallback
+===========
+*/
+void SDL_SoundInputCallback( void *userdata, Uint8 *stream, int len )
+{
+	int size;
+
+	size = Q_min( len, sizeof( voice.input_buffer ) - voice.input_buffer_pos );
+	SDL_memset( voice.input_buffer + voice.input_buffer_pos, 0, size );
+	SDL_MixAudioFormat( voice.input_buffer + voice.input_buffer_pos, stream, sdl_format, size, SDL_MIX_MAXVOLUME );
+	voice.input_buffer_pos += size;
+}
+
+/*
+===========
+VoiceCapture_Init
+===========
+*/
+qboolean VoiceCapture_Init( void )
+{
+	SDL_AudioSpec wanted, spec;
+
+	SDL_zero( wanted );
+	wanted.freq = voice.samplerate;
+	wanted.format = AUDIO_S16LSB;
+	wanted.channels = voice.channels;
+	wanted.samples = voice.frame_size / voice.width;
+	wanted.callback = SDL_SoundInputCallback;
+
+	in_dev = SDL_OpenAudioDevice( NULL, SDL_TRUE, &wanted, &spec, 0 );
+
+	if( SDLash_IsAudioError( in_dev ))
+	{
+		Con_Printf( "VoiceCapture_Init: error creating capture device (%s)\n", SDL_GetError() );
+		return false;
+	}
+		
+	Con_Printf( S_NOTE "VoiceCapture_Init: capture device creation success (%i: %s)\n", in_dev, SDL_GetAudioDeviceName( in_dev, SDL_TRUE ) );
+	return true;
+}
+
+/*
+===========
+VoiceCapture_RecordStart
+===========
+*/
+qboolean VoiceCapture_RecordStart( void )
+{
+	SDL_PauseAudioDevice( in_dev, SDL_FALSE );
+
+	return true;
+}
+
+/*
+===========
+VoiceCapture_RecordStop
+===========
+*/
+void VoiceCapture_RecordStop( void )
+{
+	if( in_dev )
+		SDL_PauseAudioDevice( in_dev, SDL_TRUE );
+}
+
+/*
+==========
+VoiceCapture_Shutdown
+==========
+*/
+void VoiceCapture_Shutdown( void )
+{
+	if( !in_dev )
+		return;
+
+	SDL_CloseAudioDevice( in_dev );
+}
+
 #endif // XASH_SOUND == SOUND_SDL
