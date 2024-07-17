@@ -24,7 +24,7 @@ GNU General Public License for more details.
 #include "sound.h"
 #include "input.h"
 
-#define STUDIO_INTERPOLATION_FIX
+// #define STUDIO_INTERPOLATION_FIX
 
 /*
 ==================
@@ -52,19 +52,30 @@ CL_UpdatePositions
 Store another position into interpolation circular buffer
 ==================
 */
-void CL_UpdatePositions( cl_entity_t *ent )
+static void CL_UpdatePositions( cl_entity_t *ent )
 {
-	position_history_t	*ph;
+	position_history_t	*ph, *prev;
+
+	prev = &ent->ph[ent->current_position];
 
 	ent->current_position = (ent->current_position + 1) & HISTORY_MASK;
 	ph = &ent->ph[ent->current_position];
 	VectorCopy( ent->curstate.origin, ph->origin );
 	VectorCopy( ent->curstate.angles, ph->angles );
 
-	if( ent->model && ent->model->type == mod_brush )
-		ph->animtime = ent->curstate.animtime;
-	else
-		ph->animtime = cl.time;
+	ph->animtime = ent->curstate.animtime;
+
+	// a1ba: for some reason, this sometimes still may happen
+	// at this time, I'm not sure whether this bug happens in delta readwrite code
+	// or server just decides to go backwards and really sends these values
+	if( ph->animtime < prev->animtime )
+	{
+		// try to deduce real animtime by looking up the difference between
+		// server messages (cl.mtime is never modified ny the interpolation code)
+		float diff = Q_max( 0, ent->curstate.msg_time - ent->prevstate.msg_time );
+
+		ph->animtime = prev->animtime + diff;
+	}
 }
 
 /*
@@ -74,7 +85,7 @@ CL_ResetPositions
 Interpolation init or reset after teleporting
 ==================
 */
-void CL_ResetPositions( cl_entity_t *ent )
+static void CL_ResetPositions( cl_entity_t *ent )
 {
 	position_history_t	store;
 
@@ -96,7 +107,7 @@ check for instant movement in case
 we don't want interpolate this
 ==================
 */
-qboolean CL_EntityTeleported( cl_entity_t *ent )
+static qboolean CL_EntityTeleported( cl_entity_t *ent )
 {
 	float	len, maxlen;
 	vec3_t	delta;
@@ -117,7 +128,7 @@ CL_CompareTimestamps
 round-off floating errors
 ==================
 */
-qboolean CL_CompareTimestamps( float t1, float t2 )
+static qboolean CL_CompareTimestamps( float t1, float t2 )
 {
 	int	iTime1 = t1 * 1000;
 	int	iTime2 = t2 * 1000;
@@ -132,9 +143,9 @@ CL_EntityIgnoreLerp
 some ents will be ignore lerping
 ==================
 */
-qboolean CL_EntityIgnoreLerp( cl_entity_t *e )
+static qboolean CL_EntityIgnoreLerp( cl_entity_t *e )
 {
-	if( cl_nointerp->value > 0.f )
+	if( cl_nointerp.value > 0.f )
 		return true;
 
 	if( e->model && e->model->type == mod_alias )
@@ -149,7 +160,7 @@ CL_EntityCustomLerp
 
 ==================
 */
-qboolean CL_EntityCustomLerp( cl_entity_t *e )
+static qboolean CL_EntityCustomLerp( cl_entity_t *e )
 {
 	switch( e->curstate.movetype )
 	{
@@ -159,6 +170,13 @@ qboolean CL_EntityCustomLerp( cl_entity_t *e )
 	case MOVETYPE_FLY:
 	case MOVETYPE_COMPOUND:
 		return false;
+
+	// ABSOLUTELY STUPID HACK TO ALLOW MONSTERS
+	// INTERPOLATION IN GRAVGUNMOD COOP
+	// MUST BE REMOVED ONCE WE REMOVE 48 PROTO SUPPORT
+	case MOVETYPE_TOSS:
+		if( cls.legacymode && e->model && e->model->type == mod_studio )
+			return false;
 	}
 
 	return true;
@@ -171,7 +189,7 @@ CL_ParametricMove
 check for parametrical moved entities
 ==================
 */
-qboolean CL_ParametricMove( cl_entity_t *ent )
+static qboolean CL_ParametricMove( cl_entity_t *ent )
 {
 	float	frac, dt, t;
 	vec3_t	delta;
@@ -208,7 +226,7 @@ CL_UpdateLatchedVars
 
 ====================
 */
-void CL_UpdateLatchedVars( cl_entity_t *ent )
+static void CL_UpdateLatchedVars( cl_entity_t *ent )
 {
 	if( !ent->model || ( ent->model->type != mod_alias && ent->model->type != mod_studio ))
 		return; // below fields used only for alias and studio interpolation
@@ -241,7 +259,7 @@ CL_GetStudioEstimatedFrame
 
 ====================
 */
-float CL_GetStudioEstimatedFrame( cl_entity_t *ent )
+static float CL_GetStudioEstimatedFrame( cl_entity_t *ent )
 {
 	studiohdr_t	*pstudiohdr;
 	mstudioseqdesc_t	*pseqdesc;
@@ -255,7 +273,7 @@ float CL_GetStudioEstimatedFrame( cl_entity_t *ent )
 		{
 			sequence = bound( 0, ent->curstate.sequence, pstudiohdr->numseq - 1 );
 			pseqdesc = (mstudioseqdesc_t *)((byte *)pstudiohdr + pstudiohdr->seqindex) + sequence;
-			return ref.dllFuncs.R_StudioEstimateFrame( ent, pseqdesc );
+			return ref.dllFuncs.R_StudioEstimateFrame( ent, pseqdesc, cl.time );
 		}
 	}
 
@@ -303,7 +321,7 @@ CL_ProcessEntityUpdate
 apply changes since new frame received
 ==================
 */
-void CL_ProcessEntityUpdate( cl_entity_t *ent )
+static void CL_ProcessEntityUpdate( cl_entity_t *ent )
 {
 	qboolean	parametric;
 
@@ -349,11 +367,10 @@ CL_FindInterpolationUpdates
 find two timestamps
 ==================
 */
-qboolean CL_FindInterpolationUpdates( cl_entity_t *ent, float targettime, position_history_t **ph0, position_history_t **ph1 )
+static qboolean CL_FindInterpolationUpdates( cl_entity_t *ent, double targettime, position_history_t **ph0, position_history_t **ph1 )
 {
 	qboolean	extrapolate = true;
 	uint		i, i0, i1, imod;
-	float	at;
 
 	imod = ent->current_position;
 	i0 = (imod - 0) & HISTORY_MASK;	// curpos (lerp end)
@@ -361,8 +378,10 @@ qboolean CL_FindInterpolationUpdates( cl_entity_t *ent, float targettime, positi
 
 	for( i = 1; i < HISTORY_MAX - 1; i++ )
 	{
-		at = ent->ph[( imod - i ) & HISTORY_MASK].animtime;
-		if( at == 0.0f ) break;
+		double at = ent->ph[( imod - i ) & HISTORY_MASK].animtime;
+
+		if( at == 0.0f )
+			break;
 
 		if( targettime > at )
 		{
@@ -387,15 +406,14 @@ CL_PureOrigin
 non-local players interpolation
 ==================
 */
-void CL_PureOrigin( cl_entity_t *ent, float t, vec3_t outorigin, vec3_t outangles )
+static void CL_PureOrigin( cl_entity_t *ent, double t, vec3_t outorigin, vec3_t outangles )
 {
-	qboolean		extrapolate;
-	float		t1, t0, frac;
+	double		t1, t0, frac;
 	position_history_t	*ph0, *ph1;
 	vec3_t		delta;
 
 	// NOTE: ph0 is next, ph1 is a prev
-	extrapolate = CL_FindInterpolationUpdates( ent, t, &ph0, &ph1 );
+	CL_FindInterpolationUpdates( ent, t, &ph0, &ph1 );
 
 	if ( !ph0 || !ph1 )
 		return;
@@ -403,7 +421,7 @@ void CL_PureOrigin( cl_entity_t *ent, float t, vec3_t outorigin, vec3_t outangle
 	t0 = ph0->animtime;
 	t1 = ph1->animtime;
 
-	if( t0 != 0.0f )
+	if( t0 != 0.0 )
 	{
 		vec4_t	q, q1, q2;
 
@@ -411,9 +429,9 @@ void CL_PureOrigin( cl_entity_t *ent, float t, vec3_t outorigin, vec3_t outangle
 
 		if( !Q_equal( t0, t1 ))
 			frac = ( t - t1 ) / ( t0 - t1 );
-		else frac = 1.0f;
+		else frac = 1.0;
 
-		frac = bound( 0.0f, frac, 1.2f );
+		frac = bound( 0.0, frac, 1.2 );
 
 		VectorMA( ph1->origin, frac, delta, outorigin );
 
@@ -437,11 +455,11 @@ CL_InterpolateModel
 non-players interpolation
 ==================
 */
-int CL_InterpolateModel( cl_entity_t *e )
+static int CL_InterpolateModel( cl_entity_t *e )
 {
 	position_history_t  *ph0 = NULL, *ph1 = NULL;
 	vec3_t		origin, angles, delta;
-	float		t, t1, t2, frac;
+	double		t, t1, t2, frac;
 	vec4_t		q, q1, q2;
 
 	VectorCopy( e->curstate.origin, e->origin );
@@ -464,13 +482,13 @@ int CL_InterpolateModel( cl_entity_t *e )
 	if( cl.maxclients <= 1 )
 		return 1;
 
-	if( e->model->type == mod_brush && !cl_bmodelinterp->value )
+	if( e->model->type == mod_brush && !cl_bmodelinterp.value )
 		return 1;
 
 	if( cl.local.moving && cl.local.onground == e->index )
 		return 1;
 
-	t = cl.time - cl_interp->value;
+	t = cl.time - cl_interp.value;
 	CL_FindInterpolationUpdates( e, t, &ph0, &ph1 );
 
 	if( ph0 == NULL || ph1 == NULL )
@@ -489,9 +507,7 @@ int CL_InterpolateModel( cl_entity_t *e )
 		return 0;
 	}
 
-	// HACKHACK: workaround buggy position history animtime
-	// going backward sometimes
-	if( Q_equal( t2, t1 ) || t2 < t1 )
+	if( Q_equal( t2, t1 ))
 	{
 		VectorCopy( ph0->origin, e->origin );
 		VectorCopy( ph0->angles, e->angles );
@@ -529,7 +545,7 @@ interpolate non-local clients
 */
 void CL_ComputePlayerOrigin( cl_entity_t *ent )
 {
-	float	targettime;
+	double	targettime;
 	vec4_t	q, q1, q2;
 	vec3_t	origin;
 	vec3_t	angles;
@@ -537,7 +553,7 @@ void CL_ComputePlayerOrigin( cl_entity_t *ent )
 	if( !ent->player )
 		return;
 
-	if( cl_nointerp->value > 0.f )
+	if( cl_nointerp.value > 0.f )
 	{
 		VectorCopy( ent->curstate.angles, ent->angles );
 		VectorCopy( ent->curstate.origin, ent->origin );
@@ -555,7 +571,7 @@ void CL_ComputePlayerOrigin( cl_entity_t *ent )
 		return;
 	}
 
-	targettime = cl.time - cl_interp->value;
+	targettime = cl.time - cl_interp.value;
 	CL_PureOrigin( ent, targettime, origin, angles );
 
 	VectorCopy( angles, ent->angles );
@@ -569,7 +585,7 @@ CL_ProcessPlayerState
 process player states after the new packet has received
 =================
 */
-void CL_ProcessPlayerState( int playerindex, entity_state_t *state )
+static void CL_ProcessPlayerState( int playerindex, entity_state_t *state )
 {
 	entity_state_t	*ps;
 
@@ -589,7 +605,7 @@ reset latched state if this frame entity was teleported
 or just EF_NOINTERP was set
 =================
 */
-void CL_ResetLatchedState( int pnum, frame_t *frame, cl_entity_t *ent )
+static void CL_ResetLatchedState( int pnum, frame_t *frame, cl_entity_t *ent )
 {
 	if( CHECKVISBIT( frame->flags, pnum ))
 	{
@@ -654,6 +670,24 @@ FRAME PARSING
 
 =========================================================================
 */
+static qboolean CL_ParseEntityNumFromPacket( sizebuf_t *msg, int *newnum )
+{
+	if( cls.legacymode )
+	{
+		*newnum = MSG_ReadWord( msg );
+		if( *newnum == 0 )
+			return false;
+	}
+	else
+	{
+		*newnum = MSG_ReadUBitLong( msg, MAX_ENTITY_BITS );
+		if( *newnum == LAST_EDICT )
+			return false;
+	}
+
+	return true;
+}
+
 /*
 =================
 CL_FlushEntityPacket
@@ -661,7 +695,7 @@ CL_FlushEntityPacket
 Read and ignore whole entity packet.
 =================
 */
-void CL_FlushEntityPacket( sizebuf_t *msg )
+static void CL_FlushEntityPacket( sizebuf_t *msg )
 {
 	int		newnum;
 	entity_state_t	from, to;
@@ -674,11 +708,11 @@ void CL_FlushEntityPacket( sizebuf_t *msg )
 	// read it all, but ignore it
 	while( 1 )
 	{
-		newnum = MSG_ReadUBitLong( msg, MAX_ENTITY_BITS );
-		if( newnum == LAST_EDICT ) break; // done
+		if( !CL_ParseEntityNumFromPacket( msg, &newnum ))
+			break; // done
 
 		if( MSG_CheckOverflow( msg ))
-			Host_Error( "CL_FlushEntityPacket: overflow\n" );
+			Host_Error( "%s: overflow\n", __func__ );
 
 		MSG_ReadDeltaEntity( msg, &from, &to, newnum, CL_IsPlayerIndex( newnum ) ? DELTA_PLAYER : DELTA_ENTITY, cl.mtime[0] );
 	}
@@ -691,7 +725,7 @@ CL_DeltaEntity
 processing delta update
 =================
 */
-void CL_DeltaEntity( sizebuf_t *msg, frame_t *frame, int newnum, entity_state_t *old, qboolean has_update )
+static void CL_DeltaEntity( sizebuf_t *msg, frame_t *frame, int newnum, entity_state_t *old, qboolean has_update )
 {
 	cl_entity_t	*ent;
 	entity_state_t	*state;
@@ -706,7 +740,7 @@ void CL_DeltaEntity( sizebuf_t *msg, frame_t *frame, int newnum, entity_state_t 
 
 	if(( newnum < 0 ) || ( newnum >= clgame.maxEntities ))
 	{
-		Con_DPrintf( S_ERROR "CL_DeltaEntity: invalid newnum: %d\n", newnum );
+		Con_DPrintf( S_ERROR "%s: invalid newnum: %d\n", __func__, newnum );
 		if( has_update )
 			MSG_ReadDeltaEntity( msg, old, state, newnum, delta_type, cl.mtime[0] );
 		return;
@@ -847,21 +881,12 @@ int CL_ParsePacketEntities( sizebuf_t *msg, qboolean delta )
 
 	while( 1 )
 	{
-		int lastedict;
-		if( cls.legacymode )
-		{
-			newnum = MSG_ReadWord( msg );
-			lastedict = 0;
-		}
-		else
-		{
-			newnum = MSG_ReadUBitLong( msg, MAX_ENTITY_BITS );
-			lastedict = LAST_EDICT;
-		}
+		if( !CL_ParseEntityNumFromPacket( msg, &newnum ))
+			break; // done
 
-		if( newnum == lastedict ) break; // end of packet entities
 		if( MSG_CheckOverflow( msg ))
-			Host_Error( "CL_ParsePacketEntities: overflow\n" );
+			Host_Error( "%s: overflow\n", __func__ );
+
 		player = CL_IsPlayerIndex( newnum );
 
 		while( oldnum < newnum )
@@ -930,7 +955,7 @@ int CL_ParsePacketEntities( sizebuf_t *msg, qboolean delta )
 	}
 
 	if( newframe->num_entities != count && newframe->num_entities != 0 )
-		Con_Reportf( S_WARN "CL_Parse%sPacketEntities: (%i should be %i)\n", delta ? "Delta" : "", newframe->num_entities, count );
+		Con_Reportf( S_WARN "%s%s: (%i should be %i)\n", __func__, delta ? "Delta" : "", newframe->num_entities, count );
 
 	if( !newframe->valid )
 		return playerbytes; // frame is not valid but message was parsed
@@ -970,8 +995,24 @@ all the visible entities should pass this filter
 */
 qboolean CL_AddVisibleEntity( cl_entity_t *ent, int entityType )
 {
+	qboolean draw_player = true;
+
 	if( !ent || !ent->model )
 		return false;
+
+	// don't add the player in firstperson mode
+	if( RP_LOCALCLIENT( ent ))
+	{
+		cl.local.apply_effects = true;
+
+		if( !CL_IsThirdPerson( ) && ( ent->index == cl.viewentity ))
+		{
+			// we don't draw player in default renderer in firstperson mode
+			// but let the client.dll know about player entity anyway
+			// for use in custom renderers
+			draw_player = false;
+		}
+	}
 
 	// check for adding this entity
 	if( !clgame.dllFuncs.pfnAddEntity( entityType, ent, ent->model->name ))
@@ -982,14 +1023,8 @@ qboolean CL_AddVisibleEntity( cl_entity_t *ent, int entityType )
 		return false;
 	}
 
-	// don't add the player in firstperson mode
-	if( RP_LOCALCLIENT( ent ))
-	{
-		cl.local.apply_effects = true;
-
-		if( !CL_IsThirdPerson( ) && ( ent->index == cl.viewentity ))
-			return false;
-	}
+	if( !draw_player )
+		return false;
 
 	if( entityType == ET_BEAM )
 	{
@@ -1022,7 +1057,7 @@ CL_LinkCustomEntity
 Add server beam to draw list
 =============
 */
-void CL_LinkCustomEntity( cl_entity_t *ent, entity_state_t *state )
+static void CL_LinkCustomEntity( cl_entity_t *ent, entity_state_t *state )
 {
 	ent->curstate.movetype = state->modelindex; // !!!
 
@@ -1045,7 +1080,7 @@ Create visible entities in the correct position
 for all current players
 =============
 */
-void CL_LinkPlayers( frame_t *frame )
+static void CL_LinkPlayers( frame_t *frame )
 {
 	entity_state_t	*state;
 	cl_entity_t	*ent;
@@ -1128,7 +1163,7 @@ CL_LinkPacketEntities
 
 ===============
 */
-void CL_LinkPacketEntities( frame_t *frame )
+static void CL_LinkPacketEntities( frame_t *frame )
 {
 	cl_entity_t	*ent;
 	entity_state_t	*state;
@@ -1152,7 +1187,7 @@ void CL_LinkPacketEntities( frame_t *frame )
 
 		if( !ent )
 		{
-			Con_Reportf( S_ERROR "CL_LinkPacketEntity: bad entity %i\n", state->number );
+			Con_Reportf( S_ERROR "%s: bad entity %i\n", __func__, state->number );
 			continue;
 		}
 
@@ -1193,17 +1228,33 @@ void CL_LinkPacketEntities( frame_t *frame )
 #else
 					if( ent->lastmove >= cl.time )
 					{
+						float at = ent->curstate.animtime;
+
 						CL_ResetLatchedVars( ent, true );
+
+						if( cl_fixmodelinterpolationartifacts.value )
+							ent->latched.prevanimtime = ent->curstate.animtime = at;
+
 						VectorCopy( ent->curstate.origin, ent->latched.prevorigin );
 						VectorCopy( ent->curstate.angles, ent->latched.prevangles );
 
-						// disable step interpolation in client.dll
-						ent->curstate.movetype = MOVETYPE_NONE;
+						if( !FBitSet( host.features, ENGINE_COMPUTE_STUDIO_LERP ))
+						{
+							// disable step interpolation in client.dll
+							ent->curstate.movetype = MOVETYPE_NONE;
+						}
 					}
 					else
 					{
-						// restore step interpolation in client.dll
-						ent->curstate.movetype = MOVETYPE_STEP;
+						if( FBitSet( host.features, ENGINE_COMPUTE_STUDIO_LERP ))
+						{
+							interpolate = true;
+						}
+						else
+						{
+							// restore step interpolation in client.dll
+							ent->curstate.movetype = MOVETYPE_STEP;
+						}
 					}
 #endif
 				}
@@ -1228,11 +1279,24 @@ void CL_LinkPacketEntities( frame_t *frame )
 				if ( !CL_InterpolateModel( ent ))
 					continue;
 			}
-			else if( ent->curstate.movetype == MOVETYPE_STEP && !NET_IsLocalAddress( cls.netchan.remote_address ))
+			// a1ba: in GoldSrc this is done for cstrike and czero
+			// but let modders use this as an engine feature
+			else if( FBitSet( host.features, ENGINE_STEP_POSHISTORY_LERP ) &&
+				ent->curstate.movetype == MOVETYPE_STEP && !NET_IsLocalAddress( cls.netchan.remote_address ))
 			{
 				if( !CL_InterpolateModel( ent ))
 					continue;
 			}
+#if 0
+			// ABSOLUTELY STUPID HACK TO ALLOW MONSTERS
+			// INTERPOLATION IN GRAVGUNMOD COOP
+			// MUST BE REMOVED ONCE WE REMOVE 48 PROTO SUPPORT
+			else if( cls.legacymode && ent->model->type == mod_studio && ent->curstate.movetype == MOVETYPE_TOSS )
+			{
+				if( !CL_InterpolateModel( ent ))
+					continue;
+			}
+#endif
 			else
 			{
 				// no interpolation right now
@@ -1427,10 +1491,4 @@ qboolean CL_GetMovieSpatialization( rawchan_t *ch )
 	}
 
 	return true;
-}
-
-void CL_ExtraUpdate( void )
-{
-	clgame.dllFuncs.IN_Accumulate();
-	S_ExtraUpdate();
 }

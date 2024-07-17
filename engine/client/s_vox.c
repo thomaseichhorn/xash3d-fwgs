@@ -16,12 +16,127 @@ GNU General Public License for more details.
 #include "common.h"
 #include "sound.h"
 #include "const.h"
-#include "sequence.h"
 #include <ctype.h>
+
+#define TRIM_SCAN_MAX 255
+#define TRIM_SAMPLES_BELOW_8 2
+#define TRIM_SAMPLES_BELOW_16 512 // 65k * 2 / 256
+
+#define CVOXFILESENTENCEMAX 4096
 
 static int cszrawsentences = 0;
 static char *rgpszrawsentence[CVOXFILESENTENCEMAX];
 static const char *voxperiod = "_period", *voxcomma = "_comma";
+
+static qboolean S_ShouldTrimSample8( const int8_t *buf, int channels )
+{
+	if( abs( buf[0] ) > TRIM_SAMPLES_BELOW_8 )
+		return false;
+
+	if( channels >= 2 && abs( buf[1] ) > TRIM_SAMPLES_BELOW_8 )
+		return false;
+
+	return true;
+}
+
+static qboolean S_ShouldTrimSample16( const int16_t *buf, int channels )
+{
+	if( abs( buf[0] ) > TRIM_SAMPLES_BELOW_16 )
+		return false;
+
+	if( channels >= 2 && abs( buf[1] ) > TRIM_SAMPLES_BELOW_16 )
+		return false;
+
+	return true;
+}
+
+static int S_TrimStart( const wavdata_t *wav, int start )
+{
+	size_t channels = wav->channels, width = wav->width, i;
+
+	if( wav->type != WF_PCMDATA )
+		return start;
+
+	if( width == 1 )
+	{
+		const int8_t *data = (const int8_t *)&wav->buffer[channels * width * start];
+
+		for( i = 0; i < TRIM_SCAN_MAX && start < wav->samples; i++ )
+		{
+			if( !S_ShouldTrimSample8( data, wav->channels ))
+				break;
+
+			start += channels;
+			data += channels;
+		}
+	}
+	else if( width == 2 )
+	{
+		const int16_t *data = (const int16_t *)&wav->buffer[channels * width * start];
+
+		for( i = 0; i < TRIM_SCAN_MAX && start < wav->samples; i++ )
+		{
+			if( !S_ShouldTrimSample16( data, wav->channels ))
+				break;
+
+			start += channels;
+			data += channels;
+		}
+	}
+
+	return start;
+}
+
+static int S_TrimEnd( const wavdata_t *wav, int end )
+{
+	size_t channels = wav->channels, width = wav->width, i;
+
+	if( wav->type != WF_PCMDATA )
+		return end;
+
+	if( width == 1 )
+	{
+		const int8_t *data = (const int8_t *)&wav->buffer[channels * width * end];
+
+		for( i = 0; i < TRIM_SCAN_MAX && end > 0; i++ )
+		{
+			if( !S_ShouldTrimSample8( data, wav->channels ))
+				break;
+
+			end -= channels;
+			data -= channels;
+		}
+	}
+	else if( width == 2 )
+	{
+		const int16_t *data = (const int16_t *)&wav->buffer[channels * width * end];
+
+		for( i = 0; i < TRIM_SCAN_MAX && end > 0; i++ )
+		{
+			if( !S_ShouldTrimSample16( data, wav->channels ))
+				break;
+
+			end -= channels;
+			data -= channels;
+		}
+	}
+
+	return end;
+}
+
+static void S_TrimStartEndTimes( channel_t *ch, wavdata_t *wav, int start, int end )
+{
+	ch->pMixer.sample = start = S_TrimStart( wav, start );
+
+	// don't overrun the buffer while trimming end
+	if( end == 0 )
+		end = wav->samples - wav->channels;
+
+	if( end < start )
+		end = start;
+
+	ch->pMixer.forcedEndSample = S_TrimEnd( wav, end );
+}
 
 // return number of samples mixed
 int VOX_MixDataToDevice( channel_t *pchan, int sampleCount, int outputRate, int outputOffset )
@@ -79,11 +194,7 @@ void VOX_LoadWord( channel_t *ch )
 
 	if( end <= start ) end = 0;
 
-	if( start )
-		S_SetSampleStart( ch, data, start * 0.01f * samples );
-
-	if( end )
-		S_SetSampleEnd( ch, data, end * 0.01f * samples );
+	S_TrimStartEndTimes( ch, data, start * 0.01f * samples, end * 0.01f * samples );
 }
 
 void VOX_FreeWord( channel_t *ch )
@@ -142,7 +253,7 @@ static const char *VOX_GetDirectory( char *szpath, const char *psz, int nsize )
 
 	if( !p )
 	{
-		Q_strcpy( szpath, "vox/" );
+		Q_strncpy( szpath, "vox/", nsize );
 		return psz;
 	}
 
@@ -150,7 +261,7 @@ static const char *VOX_GetDirectory( char *szpath, const char *psz, int nsize )
 
 	if( len > nsize )
 	{
-		Con_Printf( "VOX_GetDirectory: invalid directory in: %s\n", psz );
+		Con_Printf( "%s: invalid directory in: %s\n", __func__, psz );
 		return NULL;
 	}
 
@@ -165,23 +276,11 @@ static const char *VOX_LookupString( const char *pszin )
 	int i = -1, len;
 	const char *c;
 
-	// check if we are a CSCZ or immediate sentence
+	// check if we are an immediate sentence
 	if( *pszin == '#' )
 	{
-		// Q_atoi is too smart and allows negative values
-		// so check with Q_isdigit beforehand
-		if( Q_isdigit( pszin + 1 ))
-		{
-			sentenceEntry_s *sentenceEntry;
-			i = Q_atoi( pszin + 1 );
-			if(( sentenceEntry = Sequence_GetSentenceByIndex( i )))
-				return sentenceEntry->data;
-		}
-		else
-		{
-			// immediate sentence, probably coming from "speak" command
-			return pszin + 1;
-		}
+		// immediate sentence, probably coming from "speak" command
+		return pszin + 1;
 	}
 
 	// check if we received an index
@@ -368,7 +467,7 @@ void VOX_LoadSound( channel_t *ch, const char *pszin )
 
 	if( !psz )
 	{
-		Con_Printf( "VOX_LoadSound: no sentence named %s\n", pszin );
+		Con_Printf( "%s: no sentence named %s\n", __func__, pszin );
 		return;
 	}
 
@@ -376,13 +475,13 @@ void VOX_LoadSound( channel_t *ch, const char *pszin )
 
 	if( !psz )
 	{
-		Con_Printf( "VOX_LoadSound: failed getting directory for %s\n", pszin );
+		Con_Printf( "%s: failed getting directory for %s\n", __func__, pszin );
 		return;
 	}
 
 	if( Q_strlen( psz ) >= sizeof( buffer ) )
 	{
-		Con_Printf( "VOX_LoadSound: sentence is too long %s", psz );
+		Con_Printf( "%s: sentence is too long %s", __func__, psz );
 		return;
 	}
 

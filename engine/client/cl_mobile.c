@@ -20,14 +20,17 @@ GNU General Public License for more details.
 #include "input.h"
 #include "platform/platform.h"
 
-mobile_engfuncs_t *gMobileEngfuncs;
+static mobile_engfuncs_t *gMobileEngfuncs;
 
-convar_t *vibration_length;
-convar_t *vibration_enable;
+static CVAR_DEFINE_AUTO( vibration_length, "1.0", FCVAR_ARCHIVE | FCVAR_PRIVILEGED, "vibration length" );
+static CVAR_DEFINE_AUTO( vibration_enable, "1", FCVAR_ARCHIVE | FCVAR_PRIVILEGED, "enable vibration" );
+
+static cl_font_t g_scaled_font;
+static float g_font_scale;
 
 static void pfnVibrate( float life, char flags )
 {
-	if( !vibration_enable->value )
+	if( !vibration_enable.value )
 		return;
 
 	if( life < 0.0f )
@@ -39,7 +42,7 @@ static void pfnVibrate( float life, char flags )
 	//Con_Reportf( "Vibrate: %f %d\n", life, flags );
 
 	// here goes platform-specific backends
-	Platform_Vibrate( life * vibration_length->value, flags );
+	Platform_Vibrate( life * vibration_length.value, flags );
 }
 
 static void Vibrate_f( void )
@@ -60,37 +63,28 @@ static void pfnEnableTextInput( int enable )
 
 static int pfnDrawScaledCharacter( int x, int y, int number, int r, int g, int b, float scale )
 {
-	int width  = clgame.scrInfo.charWidths[number] * scale * hud_scale->value;
-	int height = clgame.scrInfo.iCharHeight        * scale * hud_scale->value;
+	// this call is very ineffective and possibly broken!
+	rgba_t color = { r, g, b, 255 };
+	int flags = FONT_DRAW_HUD;
 
-	if( !cls.creditsFont.valid )
-		return 0;
+	if( hud_utf8.value )
+		SetBits( flags, FONT_DRAW_UTF8 );
 
-	x *= hud_scale->value;
-	y *= hud_scale->value;
+	if( fabs( g_font_scale - scale ) > 0.1f ||
+		g_scaled_font.hFontTexture != cls.creditsFont.hFontTexture )
+	{
+		int i;
 
-	number &= 255;
-	number = Con_UtfProcessChar( number );
+		g_scaled_font = cls.creditsFont;
+		g_scaled_font.scale *= scale;
+		g_scaled_font.charHeight *= scale;
+		for( i = 0; i < ARRAYSIZE( g_scaled_font.charWidths ); i++ )
+			g_scaled_font.charWidths[i] *= scale;
 
-	if( number < 32 )
-		return 0;
+		g_font_scale = scale;
+	}
 
-	if( y < -height )
-		return 0;
-
-	pfnPIC_Set( cls.creditsFont.hFontTexture, r, g, b, 255 );
-	pfnPIC_DrawAdditive( x, y, width, height, &cls.creditsFont.fontRc[number] );
-
-	return width;
-}
-
-static void *pfnGetNativeObject( const char *obj )
-{
-	if( !obj )
-		return NULL;
-
-	// Backend should consider that obj is case-sensitive
-	return Platform_GetNativeObject( obj );
+	return CL_DrawCharacter( x, y, number, color, &g_scaled_font, flags );
 }
 
 static void pfnTouch_HideButtons( const char *name, byte state )
@@ -121,7 +115,7 @@ static mobile_engfuncs_t gpMobileEngfuncs =
 	Touch_ResetDefaultButtons,
 	pfnDrawScaledCharacter,
 	Sys_Warn,
-	pfnGetNativeObject,
+	Sys_GetNativeObject,
 	ID_SetCustomClientID,
 	pfnParseFileSafe
 };
@@ -139,8 +133,8 @@ qboolean Mobile_Init( void )
 		success = true;
 
 	Cmd_AddCommand( "vibrate", (xcommand_t)Vibrate_f, "Vibrate for specified time");
-	vibration_length = Cvar_Get( "vibration_length", "1.0", FCVAR_ARCHIVE | FCVAR_PRIVILEGED, "Vibration length");
-	vibration_enable = Cvar_Get( "vibration_enable", "1", FCVAR_ARCHIVE | FCVAR_PRIVILEGED, "Enable vibration");
+	Cvar_RegisterVariable( &vibration_length );
+	Cvar_RegisterVariable( &vibration_enable );
 
 	return success;
 }

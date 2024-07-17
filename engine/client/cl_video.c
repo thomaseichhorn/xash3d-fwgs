@@ -68,7 +68,7 @@ qboolean SCR_NextMovie( void )
 	return true;
 }
 
-void SCR_CreateStartupVids( void )
+static void SCR_CreateStartupVids( void )
 {
 	file_t	*f;
 
@@ -202,14 +202,13 @@ SCR_PlayCinematic
 */
 qboolean SCR_PlayCinematic( const char *arg )
 {
-	string		path;
 	const char	*fullpath;
 
 	fullpath = FS_GetDiskPath( arg, false );
 
 	if( FS_FileExists( arg, false ) && !fullpath )
 	{
-		Con_Printf( S_ERROR "Couldn't load %s from packfile. Please extract it\n", path );
+		Con_Printf( S_ERROR "Couldn't load %s from packfile. Please extract it\n", arg );
 		return false;
 	}
 

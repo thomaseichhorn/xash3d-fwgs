@@ -45,7 +45,9 @@ __declspec(dllexport) int AmdPowerXpressRequestHighPerformance = 1;
 #endif
 
 #define E_GAME	"XASH3D_GAME" // default env dir to start from
-#define GAME_PATH	"valve"	// default dir to start from
+#ifndef XASH_GAMEDIR
+#define XASH_GAMEDIR	"valve"
+#endif
 
 typedef void (*pfnChangeGame)( const char *progname );
 typedef int  (*pfnInit)( int argc, char **argv, const char *progname, int bChangeGame, pfnChangeGame func );
@@ -151,8 +153,21 @@ _inline int Sys_Start( void )
 	pfnChangeGame changeGame = NULL;
 	const char *game = getenv( E_GAME );
 
+#if XASH_SAILFISH
+	const char *home = getenv( "HOME" );
+	char buf[1024];
+
+	snprintf( buf, sizeof( buf ), "%s/xash", home );
+	setenv( "XASH3D_BASEDIR", buf, true );
+#if XASH_AURORAOS
+	setenv( "XASH3D_RODIR", "/usr/share/su.xash.Engine/rodir", true );
+#else
+	setenv( "XASH3D_RODIR", "/usr/share/harbour-xash3d-fwgs/rodir", true );
+#endif // XASH_AURORAOS
+#endif // XASH_SAILFISH
+
 	if( !game )
-		game = GAME_PATH;
+		game = XASH_GAMEDIR;
 
 	strncpy( szGameDir, game, sizeof( szGameDir ) - 1 );
 

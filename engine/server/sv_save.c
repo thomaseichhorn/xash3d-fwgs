@@ -35,7 +35,6 @@ half-life implementation of saverestore system
 
 #define SAVE_HEAPSIZE		0x400000				// reserve 4Mb for now
 #define SAVE_HASHSTRINGS		0xFFF				// 4095 unique strings
-#define SAVE_AGED_COUNT		2
 
 // savedata headers
 typedef struct
@@ -653,7 +652,7 @@ static void DirectoryCopy( const char *pPath, file_t *pFile )
 		fileSize = FS_FileLength( pCopy );
 
 		memset( szName, 0, sizeof( szName )); // clearing the string to prevent garbage in output file
-		Q_strncpy( szName, COM_FileWithoutPath( t->filenames[i] ), MAX_OSPATH );
+		Q_strncpy( szName, COM_FileWithoutPath( t->filenames[i] ), sizeof( szName ));
 		FS_Write( pFile, szName, MAX_OSPATH );
 		FS_Write( pFile, &fileSize, sizeof( int ));
 		FS_FileCopy( pFile, pCopy, fileSize );
@@ -765,33 +764,6 @@ static void SaveFinish( SAVERESTOREDATA *pSaveData )
 
 	svgame.globals->pSaveData = NULL;
 	Mem_Free( pSaveData );
-}
-
-/*
-=============
-DumpHashStrings
-
-debug thing
-=============
-*/
-static void DumpHashStrings( SAVERESTOREDATA *pSaveData, const char *pMessage )
-{
-	int	i, count = 0;
-
-	if( pSaveData && pSaveData->pTokens )
-	{
-		Con_Printf( "%s\n", pMessage );
-
-		for( i = 0; i < pSaveData->tokenCount; i++ )
-		{
-			if( !pSaveData->pTokens[i] )
-				continue;
-
-			Con_Printf( "#%i %s\n", count, pSaveData->pTokens[i] );
-			count++;
-		}
-		Con_Printf( "total %i actual %i\n", pSaveData->tokenCount, count );
-	}
 }
 
 /*
@@ -985,7 +957,10 @@ static void ParseSaveTables( SAVERESTOREDATA *pSaveData, SAVE_HEADER *pHeader, i
 	InitEntityTable( pSaveData, pSaveData->tableCount );
 
 	for( i = 0; i < pSaveData->tableCount; i++ )
+	{
 		svgame.dllFuncs.pfnSaveReadFields( pSaveData, "ETABLE", &pSaveData->pTable[i], gEntityTable, ARRAYSIZE( gEntityTable ));
+		pSaveData->pTable[i].pent = NULL;
+	}
 
 	pSaveData->pBaseData = pSaveData->pCurrentData;
 	pSaveData->size = 0;
@@ -1227,7 +1202,7 @@ static void SaveClientState( SAVERESTOREDATA *pSaveData, const char *level, int 
 		header.soundCount = S_GetCurrentDynamicSounds( soundInfo, MAX_CHANNELS );
 #if !XASH_DEDICATED
 		// music not reqiured to save position: it's just continue playing on a next level
-		S_StreamGetCurrentState( header.introTrack, header.mainTrack, &header.trackPosition );
+		S_StreamGetCurrentState( header.introTrack, sizeof( header.introTrack ), header.mainTrack, sizeof( header.mainTrack ), &header.trackPosition );
 #endif
 	}
 
@@ -1389,7 +1364,7 @@ static void LoadClientState( SAVERESTOREDATA *pSaveData, const char *level, qboo
 		{
 			// NOTE: music is automatically goes across transition, never restore it on changelevel
 			MSG_BeginServerCmd( &sv.signon, svc_stufftext );
-			MSG_WriteString( &sv.signon, va( "music \"%s\" \"%s\" %i\n", header.introTrack, header.mainTrack, header.trackPosition ));
+			MSG_WriteStringf( &sv.signon, "music \"%s\" \"%s\" %i\n", header.introTrack, header.mainTrack, header.trackPosition );
 		}
 
 		// don't go camera across the levels
@@ -1693,7 +1668,7 @@ SaveGameSlot
 do a save game
 =============
 */
-static int SaveGameSlot( const char *pSaveName, const char *pSaveComment )
+static qboolean SaveGameSlot( const char *pSaveName, const char *pSaveComment )
 {
 	char		hlPath[MAX_QPATH];
 	char		name[MAX_QPATH];
@@ -1704,7 +1679,7 @@ static int SaveGameSlot( const char *pSaveName, const char *pSaveComment )
 	file_t		*pFile;
 
 	pSaveData = SaveGameState( false );
-	if( !pSaveData ) return 0;
+	if( !pSaveData ) return false;
 
 	SaveFinish( pSaveData );
 	pSaveData = SaveInit( SAVE_HEAPSIZE, SAVE_HASHSTRINGS ); // re-init the buffer
@@ -1727,19 +1702,21 @@ static int SaveGameSlot( const char *pSaveName, const char *pSaveComment )
 	COM_FixSlashes( name );
 
 	// output to disk
-	if( !Q_stricmp( pSaveName, "quick" ) || !Q_stricmp( pSaveName, "autosave" ))
-		AgeSaveList( pSaveName, SAVE_AGED_COUNT );
+	if( !Q_stricmp( pSaveName, "quick" ))
+		AgeSaveList( pSaveName, GI->quicksave_aged_count );
+	else if( !Q_stricmp( pSaveName, "autosave" ))
+		AgeSaveList( pSaveName, GI->autosave_aged_count );
 
 	// output to disk
 	if(( pFile = FS_Open( name, "wb", true )) == NULL )
 	{
 		// something bad is happens
 		SaveFinish( pSaveData );
-		return 0;
+		return false;
 	}
 
 	// pending the preview image for savegame
-	Cbuf_AddText( va( "saveshot \"%s\"\n", pSaveName ));
+	Cbuf_AddTextf( "saveshot \"%s\"\n", pSaveName );
 	Con_Printf( "Saving game to %s...\n", name );
 
 	version = SAVEGAME_VERSION;
@@ -1759,7 +1736,7 @@ static int SaveGameSlot( const char *pSaveName, const char *pSaveComment )
 	SaveFinish( pSaveData );
 	FS_Close( pFile );
 
-	return 1;
+	return true;
 }
 
 /*
@@ -2042,12 +2019,12 @@ void SV_ChangeLevel( qboolean loadfromsavedgame, const char *mapname, const char
 
 	if( start )
 	{
-		Q_strncpy( _startspot, start, MAX_STRING );
+		Q_strncpy( _startspot, start, sizeof( _startspot ));
 		startspot = _startspot;
 	}
 
-	Q_strncpy( level, mapname, MAX_STRING );
-	Q_strncpy( oldlevel, sv.name, MAX_STRING );
+	Q_strncpy( level, mapname, sizeof( level ));
+	Q_strncpy( oldlevel, sv.name, sizeof( oldlevel ));
 
 	if( loadfromsavedgame )
 	{
@@ -2133,7 +2110,7 @@ qboolean SV_LoadGame( const char *pPath )
 		if( validload )
 		{
 			// now check for map problems
-			flags = SV_MapIsValid( gameHeader.mapName, GI->sp_entity, NULL );
+			flags = SV_MapIsValid( gameHeader.mapName, NULL );
 
 			if( FBitSet( flags, MAP_INVALID_VERSION ))
 			{
@@ -2169,17 +2146,17 @@ qboolean SV_LoadGame( const char *pPath )
 SV_SaveGame
 ==================
 */
-void SV_SaveGame( const char *pName )
+qboolean SV_SaveGame( const char *pName )
 {
 	char   comment[80];
-	int    result;
 	string savename;
 
 	if( !COM_CheckString( pName ))
-		return;
+		return false;
 
 	// can we save at this point?
-	if( !IsValidSave( )) return;
+	if( !IsValidSave( ))
+		return false;
 
 	if( !Q_stricmp( pName, "new" ))
 	{
@@ -2197,7 +2174,7 @@ void SV_SaveGame( const char *pName )
 		if( n == 1000 )
 		{
 			Con_Printf( S_ERROR "no free slots for savegame\n" );
-			return;
+			return false;
 		}
 	}
 	else Q_strncpy( savename, pName, sizeof( savename ));
@@ -2208,12 +2185,7 @@ void SV_SaveGame( const char *pName )
 #endif // XASH_DEDICATED
 
 	SaveBuildComment( comment, sizeof( comment ));
-	result = SaveGameSlot( savename, comment );
-
-#if !XASH_DEDICATED
-	if( result && !FBitSet( host.features, ENGINE_QUAKE_COMPATIBLE ))
-		CL_HudMessage( "GAMESAVED" ); // defined in titles.txt
-#endif // XASH_DEDICATED
+	return SaveGameSlot( savename, comment );
 }
 
 /*
@@ -2414,17 +2386,17 @@ int GAME_EXPORT SV_GetSaveComment( const char *savename, char *comment )
 		uint		flags;
 
 		// now check for map problems
-		flags = SV_MapIsValid( mapName, GI->sp_entity, NULL );
+		flags = SV_MapIsValid( mapName, NULL );
 
 		if( FBitSet( flags, MAP_INVALID_VERSION ))
 		{
-			Q_strncpy( comment, va( "<map %s has invalid format>", mapName ), MAX_STRING );
+			Q_snprintf( comment, MAX_STRING, "<map %s has invalid format>", mapName );
 			return 0;
 		}
 
 		if( !FBitSet( flags, MAP_IS_EXIST ))
 		{
-			Q_strncpy( comment, va( "<map %s is missed>", mapName ), MAX_STRING );
+			Q_snprintf( comment, MAX_STRING, "<map %s is missed>", mapName );
 			return 0;
 		}
 
@@ -2433,10 +2405,10 @@ int GAME_EXPORT SV_GetSaveComment( const char *savename, char *comment )
 
 		// split comment to sections
 		if( Q_strstr( savename, "quick" ))
-			Q_strncat( comment, "[quick]", CS_SIZE );
+			Q_snprintf( comment, CS_SIZE, "[quick]%s", description );
 		else if( Q_strstr( savename, "autosave" ))
-			Q_strncat( comment, "[autosave]", CS_SIZE );
-		Q_strncat( comment, description, CS_SIZE );
+			Q_snprintf( comment, CS_SIZE, "[autosave]%s", description );
+		else Q_strncpy( comment, description, CS_SIZE );
 		strftime( timestring, sizeof ( timestring ), "%b%d %Y", file_tm );
 		Q_strncpy( comment + CS_SIZE, timestring, CS_TIME );
 		strftime( timestring, sizeof( timestring ), "%H:%M", file_tm );

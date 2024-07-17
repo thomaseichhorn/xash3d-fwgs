@@ -54,12 +54,18 @@ CMakeFiles
 Makefile
 cmake_install.cmake
 install_manifest.txt
+CMakeLists.txt*
+CMakeScripts
+Testing
+compile_commands.json
+_deps
 # makedepend
 Makefile.dep
 *.bak
 ALL_BUILD.*
 INSTALL.*
 ZERO_CHECK.*
+CMakeLists.txt
 
 # Visual Studio
 *.obj
@@ -333,3 +339,6 @@ __pycache__
 .history/*
 .cache/*
 enc_temp_folder/
+
+# KDevelop4
+*.kdev4

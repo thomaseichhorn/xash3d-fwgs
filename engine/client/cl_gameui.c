@@ -216,12 +216,14 @@ UI_ShowConnectionWarning
 show message box
 =================
 */
-void UI_ShowMessageBox( const char *text )
+qboolean UI_ShowMessageBox( const char *text )
 {
 	if( gameui.dllFuncs2.pfnShowMessageBox )
 	{
 		gameui.dllFuncs2.pfnShowMessageBox( text );
+		return true;
 	}
+	return false;
 }
 
 void UI_ConnectionProgress_Disconnect( void )
@@ -309,7 +311,7 @@ static void GAME_EXPORT UI_DrawLogo( const char *filename, float x, float y, flo
 
 		// run cinematic if not
 		Q_snprintf( path, sizeof( path ), "media/%s", filename );
-		COM_DefaultExtension( path, ".avi" );
+		COM_DefaultExtension( path, ".avi", sizeof( path ));
 		fullpath = FS_GetDiskPath( path, false );
 
 		if( FS_FileExists( path, false ) && !fullpath )
@@ -414,59 +416,15 @@ static void UI_ConvertGameInfo( GAMEINFO *out, gameinfo_t *in )
 	out->gamemode = in->gamemode;
 
 	if( in->nomodels )
-		out->flags |= GFL_NOMODELS;
+		SetBits( out->flags, GFL_NOMODELS );
 	if( in->noskills )
-		out->flags |= GFL_NOSKILLS;
+		SetBits( out->flags, GFL_NOSKILLS );
 	if( in->render_picbutton_text )
-		out->flags |= GFL_RENDER_PICBUTTON_TEXT;
-}
-
-static qboolean PIC_Scissor( float *x, float *y, float *width, float *height, float *u0, float *v0, float *u1, float *v1 )
-{
-	float	dudx, dvdy;
-
-	// clip sub rect to sprite
-	if(( width == 0 ) || ( height == 0 ))
-		return false;
-
-	if( *x + *width <= gameui.ds.scissor_x )
-		return false;
-	if( *x >= gameui.ds.scissor_x + gameui.ds.scissor_width )
-		return false;
-	if( *y + *height <= gameui.ds.scissor_y )
-		return false;
-	if( *y >= gameui.ds.scissor_y + gameui.ds.scissor_height )
-		return false;
-
-	dudx = (*u1 - *u0) / *width;
-	dvdy = (*v1 - *v0) / *height;
-
-	if( *x < gameui.ds.scissor_x )
-	{
-		*u0 += (gameui.ds.scissor_x - *x) * dudx;
-		*width -= gameui.ds.scissor_x - *x;
-		*x = gameui.ds.scissor_x;
-	}
-
-	if( *x + *width > gameui.ds.scissor_x + gameui.ds.scissor_width )
-	{
-		*u1 -= (*x + *width - (gameui.ds.scissor_x + gameui.ds.scissor_width)) * dudx;
-		*width = gameui.ds.scissor_x + gameui.ds.scissor_width - *x;
-	}
-
-	if( *y < gameui.ds.scissor_y )
-	{
-		*v0 += (gameui.ds.scissor_y - *y) * dvdy;
-		*height -= gameui.ds.scissor_y - *y;
-		*y = gameui.ds.scissor_y;
-	}
-
-	if( *y + *height > gameui.ds.scissor_y + gameui.ds.scissor_height )
-	{
-		*v1 -= (*y + *height - (gameui.ds.scissor_y + gameui.ds.scissor_height)) * dvdy;
-		*height = gameui.ds.scissor_y + gameui.ds.scissor_height - *y;
-	}
-	return true;
+		SetBits( out->flags, GFL_RENDER_PICBUTTON_TEXT );
+	if( in->hd_background )
+		SetBits( out->flags, GFL_HD_BACKGROUND );
+	if( in->animated_title )
+		SetBits( out->flags, GFL_ANIMATED_TITLE );
 }
 
 /*
@@ -487,10 +445,10 @@ static void PIC_DrawGeneric( float x, float y, float width, float height, const 
 	if( prc )
 	{
 		// calc user-defined rectangle
-		s1 = (float)prc->left / (float)w;
-		t1 = (float)prc->top / (float)h;
-		s2 = (float)prc->right / (float)w;
-		t2 = (float)prc->bottom / (float)h;
+		s1 = prc->left / (float)w;
+		t1 = prc->top / (float)h;
+		s2 = prc->right / (float)w;
+		t2 = prc->bottom / (float)h;
 
 		if( width == -1 && height == -1 )
 		{
@@ -511,10 +469,9 @@ static void PIC_DrawGeneric( float x, float y, float width, float height, const 
 	}
 
 	// pass scissor test if supposed
-	if( gameui.ds.scissor_test && !PIC_Scissor( &x, &y, &width, &height, &s1, &t1, &s2, &t2 ))
+	if( !CL_Scissor( &gameui.ds.scissor, &x, &y, &width, &height, &s1, &t1, &s2, &t2 ))
 		return;
 
-	PicAdjustSize( &x, &y, &width, &height );
 	ref.dllFuncs.R_DrawStretchPic( x, y, width, height, s1, t1, s2, t2, gameui.ds.gl_texturenum );
 	ref.dllFuncs.Color4ub( 255, 255, 255, 255 );
 }
@@ -537,7 +494,7 @@ static HIMAGE GAME_EXPORT pfnPIC_Load( const char *szPicName, const byte *image_
 
 	if( !COM_CheckString( szPicName ))
 	{
-		Con_Reportf( S_ERROR "CL_LoadImage: refusing to load image with empty name\n" );
+		Con_Reportf( S_ERROR "%s: refusing to load image with empty name\n", __func__ );
 		return 0;
 	}
 
@@ -587,7 +544,7 @@ pfnPIC_Set
 
 =========
 */
-void GAME_EXPORT pfnPIC_Set( HIMAGE hPic, int r, int g, int b, int a )
+static void GAME_EXPORT pfnPIC_Set( HIMAGE hPic, int r, int g, int b, int a )
 {
 	gameui.ds.gl_texturenum = hPic;
 	r = bound( 0, r, 255 );
@@ -603,7 +560,7 @@ pfnPIC_Draw
 
 =========
 */
-void GAME_EXPORT pfnPIC_Draw( int x, int y, int width, int height, const wrect_t *prc )
+static void GAME_EXPORT pfnPIC_Draw( int x, int y, int width, int height, const wrect_t *prc )
 {
 	ref.dllFuncs.GL_SetRenderMode( kRenderNormal );
 	PIC_DrawGeneric( x, y, width, height, prc );
@@ -615,7 +572,7 @@ pfnPIC_DrawTrans
 
 =========
 */
-void GAME_EXPORT pfnPIC_DrawTrans( int x, int y, int width, int height, const wrect_t *prc )
+static void GAME_EXPORT pfnPIC_DrawTrans( int x, int y, int width, int height, const wrect_t *prc )
 {
 	ref.dllFuncs.GL_SetRenderMode( kRenderTransTexture );
 	PIC_DrawGeneric( x, y, width, height, prc );
@@ -627,7 +584,7 @@ pfnPIC_DrawHoles
 
 =========
 */
-void GAME_EXPORT pfnPIC_DrawHoles( int x, int y, int width, int height, const wrect_t *prc )
+static void GAME_EXPORT pfnPIC_DrawHoles( int x, int y, int width, int height, const wrect_t *prc )
 {
 	ref.dllFuncs.GL_SetRenderMode( kRenderTransAlpha );
 	PIC_DrawGeneric( x, y, width, height, prc );
@@ -639,7 +596,7 @@ pfnPIC_DrawAdditive
 
 =========
 */
-void GAME_EXPORT pfnPIC_DrawAdditive( int x, int y, int width, int height, const wrect_t *prc )
+static void GAME_EXPORT pfnPIC_DrawAdditive( int x, int y, int width, int height, const wrect_t *prc )
 {
 	ref.dllFuncs.GL_SetRenderMode( kRenderTransAdd );
 	PIC_DrawGeneric( x, y, width, height, prc );
@@ -659,11 +616,7 @@ static void GAME_EXPORT pfnPIC_EnableScissor( int x, int y, int width, int heigh
 	width = bound( 0, width, gameui.globals->scrWidth - x );
 	height = bound( 0, height, gameui.globals->scrHeight - y );
 
-	gameui.ds.scissor_x = x;
-	gameui.ds.scissor_width = width;
-	gameui.ds.scissor_y = y;
-	gameui.ds.scissor_height = height;
-	gameui.ds.scissor_test = true;
+	CL_EnableScissor( &gameui.ds.scissor, x, y, width, height );
 }
 
 /*
@@ -674,11 +627,7 @@ pfnPIC_DisableScissor
 */
 static void GAME_EXPORT pfnPIC_DisableScissor( void )
 {
-	gameui.ds.scissor_x = 0;
-	gameui.ds.scissor_width = 0;
-	gameui.ds.scissor_y = 0;
-	gameui.ds.scissor_height = 0;
-	gameui.ds.scissor_test = false;
+	CL_DisableScissor( &gameui.ds.scissor );
 }
 
 /*
@@ -697,6 +646,17 @@ static void GAME_EXPORT pfnFillRGBA( int x, int y, int width, int height, int r,
 	ref.dllFuncs.GL_SetRenderMode( kRenderTransTexture );
 	ref.dllFuncs.R_DrawStretchPic( x, y, width, height, 0, 0, 1, 1, R_GetBuiltinTexture( REF_WHITE_TEXTURE ) );
 	ref.dllFuncs.Color4ub( 255, 255, 255, 255 );
+}
+
+/*
+=============
+pfnCvar_RegisterVariable
+
+=============
+*/
+static cvar_t *GAME_EXPORT pfnCvar_RegisterGameUIVariable( const char *szName, const char *szValue, int flags )
+{
+	return (cvar_t *)Cvar_Get( szName, szValue, flags|FCVAR_GAMEUIDLL, Cvar_BuildAutoDescription( szName, flags|FCVAR_GAMEUIDLL ));
 }
 
 /*
@@ -766,7 +726,7 @@ static void GAME_EXPORT pfnDrawCharacter( int ix, int iy, int iwidth, int iheigh
 	t2 = t1 + size;
 
 	// pass scissor test if supposed
-	if( gameui.ds.scissor_test && !PIC_Scissor( &x, &y, &width, &height, &s1, &t1, &s2, &t2 ))
+	if( !CL_Scissor( &gameui.ds.scissor, &x, &y, &width, &height, &s1, &t1, &s2, &t2 ))
 		return;
 
 	ref.dllFuncs.GL_SetRenderMode( kRenderTransTexture );
@@ -895,7 +855,7 @@ send client connect
 */
 static void GAME_EXPORT pfnClientJoin( const netadr_t adr )
 {
-	Cbuf_AddText( va( "connect %s\n", NET_AdrToString( adr )));
+	Cbuf_AddTextf( "connect %s\n", NET_AdrToString( adr ));
 }
 
 /*
@@ -1026,30 +986,23 @@ pfnCheckGameDll
 
 =========
 */
-int GAME_EXPORT pfnCheckGameDll( void )
+static int GAME_EXPORT pfnCheckGameDll( void )
 {
-	string dllpath;
-	void	*hInst;
-
-#if TARGET_OS_IPHONE
-	// loading server library drains too many ram
-	// so 512MB iPod Touch cannot even connect to
-	// to servers in cstrike
+#ifdef XASH_INTERNAL_GAMELIBS
 	return true;
-#endif
+#else
+	string dllpath;
 
 	if( svgame.hInstance )
 		return true;
 
 	COM_GetCommonLibraryPath( LIBRARY_SERVER, dllpath, sizeof( dllpath ));
 
-	if(( hInst = COM_LoadLibrary( dllpath, true, false )) != NULL )
-	{
-		COM_FreeLibrary( hInst ); // don't increase linker's reference counter
+	if( FS_FileExists( dllpath, false ))
 		return true;
-	}
-	Con_Reportf( S_WARN "Could not load server library: %s\n", COM_GetLibraryError() );
+
 	return false;
+#endif
 }
 
 /*
@@ -1060,7 +1013,7 @@ pfnChangeInstance
 */
 static void GAME_EXPORT pfnChangeInstance( const char *newInstance, const char *szFinalMessage )
 {
-	Con_Reportf( S_ERROR "ChangeInstance menu call is deprecated!\n" );
+	Con_Reportf( S_ERROR "%s menu call is deprecated!\n", __func__ );
 }
 
 /*
@@ -1141,8 +1094,27 @@ static int pfnDelete( const char *path )
 	return FS_Delete( path );
 }
 
+static void GAME_EXPORT pfnCon_DefaultColor( int r, int g, int b )
+{
+	Con_DefaultColor( r, g, b, true );
+}
+
+static void GAME_EXPORT pfnSetCursor( void *hCursor )
+{
+	uintptr_t cursor;
+
+	if( !gameui.use_extended_api )
+		return; // ignore original Xash menus
+
+	cursor = (uintptr_t)hCursor;
+	if( cursor < dc_user || cursor > dc_last )
+		return;
+
+	Platform_SetCursorType( cursor );
+}
+
 // engine callbacks
-static ui_enginefuncs_t gEngfuncs =
+static const ui_enginefuncs_t gEngfuncs =
 {
 	pfnPIC_Load,
 	GL_FreeImage,
@@ -1180,7 +1152,7 @@ static ui_enginefuncs_t gEngfuncs =
 	UI_DrawConsoleString,
 	UI_DrawSetTextColor,
 	Con_DrawStringLen,
-	Con_DefaultColor,
+	pfnCon_DefaultColor,
 	pfnGetPlayerModel,
 	pfnSetPlayerModel,
 	pfnClearScene,
@@ -1220,7 +1192,7 @@ static ui_enginefuncs_t gEngfuncs =
 	pfnHostEndGame,
 	COM_RandomFloat,
 	COM_RandomLong,
-	IN_SetCursor,
+	pfnSetCursor,
 	pfnIsMapValid,
 	GL_ProcessTexture,
 	COM_CompareFileTime,
@@ -1262,7 +1234,10 @@ static ui_extendedfuncs_t gExtendedfuncs =
 	pfnGetRenderers,
 	Sys_DoubleTime,
 	pfnParseFileSafe,
-	NET_AdrToString
+	NET_AdrToString,
+	NET_CompareAdrSort,
+	Sys_GetNativeObject,
+	&gNetApi,
 };
 
 void UI_UnloadProgs( void )
@@ -1274,12 +1249,12 @@ void UI_UnloadProgs( void )
 
 	Cvar_FullSet( "host_gameuiloaded", "0", FCVAR_READ_ONLY );
 
+	Cvar_Unlink( FCVAR_GAMEUIDLL );
+	Cmd_Unlink( CMD_GAMEUIDLL );
+
 	COM_FreeLibrary( gameui.hInstance );
 	Mem_FreePool( &gameui.mempool );
 	memset( &gameui, 0, sizeof( gameui ));
-
-	Cvar_Unlink( FCVAR_GAMEUIDLL );
-	Cmd_Unlink( CMD_GAMEUIDLL );
 }
 
 qboolean UI_LoadProgs( void )
@@ -1322,13 +1297,13 @@ qboolean UI_LoadProgs( void )
 	if(( GetMenuAPI = (MENUAPI)COM_GetProcAddress( gameui.hInstance, "GetMenuAPI" )) == NULL )
 	{
 		COM_FreeLibrary( gameui.hInstance );
-		Con_Reportf( "UI_LoadProgs: can't init menu API\n" );
+		Con_Reportf( "%s: can't init menu API\n", __func__ );
 		gameui.hInstance = NULL;
 		return false;
 	}
 
 
-	gameui.use_text_api = false;
+	gameui.use_extended_api = false;
 
 	// make local copy of engfuncs to prevent overwrite it with user dll
 	memcpy( &gpEngfuncs, &gEngfuncs, sizeof( gpEngfuncs ));
@@ -1338,7 +1313,7 @@ qboolean UI_LoadProgs( void )
 	if( !GetMenuAPI( &gameui.dllFuncs, &gpEngfuncs, gameui.globals ))
 	{
 		COM_FreeLibrary( gameui.hInstance );
-		Con_Reportf( "UI_LoadProgs: can't init menu API\n" );
+		Con_Reportf( "%s: can't init menu API\n", __func__ );
 		Mem_FreePool( &gameui.mempool );
 		gameui.hInstance = NULL;
 		return false;
@@ -1351,30 +1326,30 @@ qboolean UI_LoadProgs( void )
 	// try to initialize new extended API
 	if( ( GetExtAPI = (UIEXTENEDEDAPI)COM_GetProcAddress( gameui.hInstance, "GetExtAPI" ) ) )
 	{
-		Con_Reportf( "UI_LoadProgs: extended Menu API found\n" );
+		Con_Reportf( "%s: extended Menu API found\n", __func__ );
 		if( GetExtAPI( MENU_EXTENDED_API_VERSION, &gameui.dllFuncs2, &gpExtendedfuncs ) )
 		{
-			Con_Reportf( "UI_LoadProgs: extended Menu API initialized\n" );
-			gameui.use_text_api = true;
+			Con_Reportf( "%s: extended Menu API initialized\n", __func__ );
+			gameui.use_extended_api = true;
 		}
 	}
 	else // otherwise, fallback to old and deprecated extensions
 	{
 		if( ( GiveTextApi = (UITEXTAPI)COM_GetProcAddress( gameui.hInstance, "GiveTextAPI" ) ) )
 		{
-			Con_Reportf( "UI_LoadProgs: extended text API found\n" );
+			Con_Reportf( "%s: extended text API found\n", __func__ );
 			Con_Reportf( S_WARN "Text API is deprecated! If you are mod developer, consider moving to Extended Menu API!\n" );
 			if( GiveTextApi( &gpExtendedfuncs ) ) // they are binary compatible, so we can just pass extended funcs API to menu
 			{
-				Con_Reportf( "UI_LoadProgs: extended text API initialized\n" );
-				gameui.use_text_api = true;
+				Con_Reportf( "%s: extended text API initialized\n", __func__ );
+				gameui.use_extended_api = true;
 			}
 		}
 
 		gameui.dllFuncs2.pfnAddTouchButtonToList = (ADDTOUCHBUTTONTOLIST)COM_GetProcAddress( gameui.hInstance, "AddTouchButtonToList" );
 		if( gameui.dllFuncs2.pfnAddTouchButtonToList )
 		{
-			Con_Reportf( "UI_LoadProgs: AddTouchButtonToList call found\n" );
+			Con_Reportf( "%s: AddTouchButtonToList call found\n", __func__ );
 			Con_Reportf( S_WARN "AddTouchButtonToList is deprecated! If you are mod developer, consider moving to Extended Menu API!\n" );
 		}
 	}

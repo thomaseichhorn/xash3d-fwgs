@@ -12,7 +12,9 @@ but WITHOUT ANY WARRANTY; without even the implied warranty of
 MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 GNU General Public License for more details.
 */
+#ifndef _GNU_SOURCE
 #define _GNU_SOURCE
+#endif
 
 #include "common.h"
 
@@ -23,15 +25,16 @@ Sys_Crash
 Crash handler, called from system
 ================
 */
-#if XASH_CRASHHANDLER == CRASHHANDLER_DBGHELP || XASH_CRASHHANDLER == CRASHHANDLER_WIN32
+#if XASH_WIN32
 
-#if XASH_CRASHHANDLER == CRASHHANDLER_DBGHELP
+#if DBGHELP
 
 #pragma comment( lib, "dbghelp" )
 
 #include <winnt.h>
 #include <dbghelp.h>
 #include <psapi.h>
+#include <time.h>
 
 #ifndef XASH_SDL
 typedef ULONG_PTR DWORD_PTR, *PDWORD_PTR;
@@ -77,7 +80,7 @@ static int Sys_ModuleName( HANDLE process, char *name, void *address, int len )
 
 static void Sys_StackTrace( PEXCEPTION_POINTERS pInfo )
 {
-	char message[1024];
+	char message[8192]; // match *nix Sys_Crash
 	int len = 0;
 	size_t i;
 	HANDLE process = GetCurrentProcess();
@@ -126,9 +129,29 @@ static void Sys_StackTrace( PEXCEPTION_POINTERS pInfo )
 	stackframe.AddrBStore.Mode = AddrModeFlat;
 	stackframe.AddrStack.Offset = context.IntSp;
 	stackframe.AddrStack.Mode = AddrModeFlat;
+#elif _M_ARM
+	image = IMAGE_FILE_MACHINE_ARMNT;
+	stackframe.AddrPC.Offset = context.Pc;
+	stackframe.AddrPC.Mode = AddrModeFlat;
+	stackframe.AddrFrame.Offset = context.R11;
+	stackframe.AddrFrame.Mode = AddrModeFlat;
+	stackframe.AddrStack.Offset = context.Sp;
+	stackframe.AddrStack.Mode = AddrModeFlat;
+#elif _M_ARM64
+	image = IMAGE_FILE_MACHINE_ARM64;
+	stackframe.AddrPC.Offset = context.Pc;
+	stackframe.AddrPC.Mode = AddrModeFlat;
+	stackframe.AddrFrame.Offset = context.Fp;
+	stackframe.AddrFrame.Mode = AddrModeFlat;
+	stackframe.AddrStack.Offset = context.Sp;
+	stackframe.AddrStack.Mode = AddrModeFlat;	
 #elif
 #error
 #endif
+
+	len = Q_snprintf( message, sizeof( message ), "Ver: " XASH_ENGINE_NAME " " XASH_VERSION " (build %i-%s, %s-%s)\n",
+		Q_buildnum(), Q_buildcommit(), Q_buildos(), Q_buildarch() );
+
 	len += Q_snprintf( message + len, 1024 - len, "Sys_Crash: address %p, code %p\n",
 		pInfo->ExceptionRecord->ExceptionAddress, (void*)pInfo->ExceptionRecord->ExceptionCode );
 	if( SymGetLineFromAddr64( process, (DWORD64)pInfo->ExceptionRecord->ExceptionAddress, &dline, &line ) )
@@ -187,7 +210,65 @@ static void Sys_StackTrace( PEXCEPTION_POINTERS pInfo )
 
 	SymCleanup( process );
 }
-#endif /* XASH_CRASHHANDLER == CRASHHANDLER_DBGHELP */
+
+static void Sys_GetProcessName( char *processName, size_t bufferSize )
+{
+	char fullpath[MAX_PATH];
+
+	GetModuleBaseName( GetCurrentProcess(), NULL, fullpath, sizeof( fullpath ) - 1 );
+	COM_FileBase( fullpath, processName, bufferSize );
+}
+
+static void Sys_GetMinidumpFileName( const char *processName, char *mdmpFileName, size_t bufferSize )
+{
+	time_t currentUtcTime = time( NULL );
+	struct tm *currentLocalTime = localtime( &currentUtcTime );
+
+	Q_snprintf( mdmpFileName, bufferSize, "%s_%s_crash_%d%.2d%.2d_%.2d%.2d%.2d.mdmp",
+		processName,
+		Q_buildcommit(),
+		currentLocalTime->tm_year + 1900,
+		currentLocalTime->tm_mon + 1,
+		currentLocalTime->tm_mday,
+		currentLocalTime->tm_hour,
+		currentLocalTime->tm_min,
+		currentLocalTime->tm_sec);
+}
+
+static qboolean Sys_WriteMinidump(PEXCEPTION_POINTERS exceptionInfo, MINIDUMP_TYPE minidumpType)
+{
+	HRESULT errorCode;
+	string processName;
+	string mdmpFileName;
+	MINIDUMP_EXCEPTION_INFORMATION minidumpInfo;
+
+	Sys_GetProcessName( processName, sizeof( processName ));
+	Sys_GetMinidumpFileName( processName, mdmpFileName, sizeof( mdmpFileName ));
+
+	SetLastError( NOERROR );
+	HANDLE fileHandle = CreateFile(
+		mdmpFileName, GENERIC_WRITE, FILE_SHARE_WRITE,
+		NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+
+	errorCode = HRESULT_FROM_WIN32( GetLastError( ));
+	if( !SUCCEEDED( errorCode )) {
+		CloseHandle( fileHandle );
+		return false;
+	}
+
+	minidumpInfo.ThreadId = GetCurrentThreadId();
+	minidumpInfo.ExceptionPointers = exceptionInfo;
+	minidumpInfo.ClientPointers = FALSE;
+
+	qboolean status = MiniDumpWriteDump(
+		GetCurrentProcess(), GetCurrentProcessId(), fileHandle,
+		minidumpType, &minidumpInfo, NULL, NULL);
+
+	CloseHandle( fileHandle );
+	return status;
+}
+
+#endif /* DBGHELP */
 
 LPTOP_LEVEL_EXCEPTION_FILTER       oldFilter;
 static long _stdcall Sys_Crash( PEXCEPTION_POINTERS pInfo )
@@ -198,7 +279,11 @@ static long _stdcall Sys_Crash( PEXCEPTION_POINTERS pInfo )
 		// check to avoid recursive call
 		host.crashed = true;
 
-#if XASH_CRASHHANDLER == CRASHHANDLER_DBGHELP
+#ifdef XASH_SDL
+		SDL_SetWindowGrab( host.hWnd, SDL_FALSE );
+#endif // XASH_SDL
+
+#if DBGHELP
 		Sys_StackTrace( pInfo );
 #else
 		Sys_Warn( "Sys_Crash: call %p at address %p", pInfo->ExceptionRecord->ExceptionAddress, pInfo->ExceptionRecord->ExceptionCode );
@@ -207,6 +292,26 @@ static long _stdcall Sys_Crash( PEXCEPTION_POINTERS pInfo )
 		if( host.type == HOST_NORMAL )
 			CL_Crashed(); // tell client about crash
 		else host.status = HOST_CRASHED;
+
+#if DBGHELP
+		if( Sys_CheckParm( "-minidumps" ))
+		{
+			int minidumpFlags = (
+				MiniDumpWithDataSegs | 
+				MiniDumpWithCodeSegs |
+				MiniDumpWithHandleData | 
+				MiniDumpWithFullMemory |
+				MiniDumpWithFullMemoryInfo |
+				MiniDumpWithIndirectlyReferencedMemory |
+				MiniDumpWithThreadInfo |
+				MiniDumpWithModuleHeaders);
+
+			if( !Sys_WriteMinidump( pInfo, (MINIDUMP_TYPE)minidumpFlags )) {
+				// fallback method, create minidump with minimal info in it
+				Sys_WriteMinidump( pInfo, MiniDumpWithDataSegs );
+			}
+		}
+#endif
 
 		if( host_developer.value <= 0 )
 		{
@@ -228,7 +333,6 @@ void Sys_SetupCrashHandler( void )
 {
 	SetErrorMode( SEM_FAILCRITICALERRORS );	// no abort/retry/fail errors
 	oldFilter = SetUnhandledExceptionFilter( Sys_Crash );
-	host.hInst = GetModuleHandle( NULL );
 }
 
 void Sys_RestoreCrashHandler( void )
@@ -237,39 +341,23 @@ void Sys_RestoreCrashHandler( void )
 	if( oldFilter ) SetUnhandledExceptionFilter( oldFilter );
 }
 
-#elif XASH_CRASHHANDLER == CRASHHANDLER_UCONTEXT
+#elif XASH_FREEBSD || XASH_NETBSD || XASH_OPENBSD || XASH_ANDROID || XASH_LINUX
 // Posix signal handler
-
-#include "library.h"
-
-#if XASH_FREEBSD || XASH_NETBSD || XASH_OPENBSD || XASH_ANDROID || XASH_LINUX
-#define HAVE_UCONTEXT_H 1
-#endif
-
-#ifdef HAVE_UCONTEXT_H
+#ifndef XASH_OPENBSD
 #include <ucontext.h>
 #endif
-
 #include <signal.h>
 #include <sys/mman.h>
+#include "library.h"
 
-#ifdef XASH_DYNAMIC_DLADDR
-static int d_dladdr( void *sym, Dl_info *info )
-{
-	static int (*dladdr_real) ( void *sym, Dl_info *info );
+#define STACK_BACKTRACE_STR     "Stack backtrace:\n"
+#define STACK_DUMP_STR          "Stack dump:\n"
 
-	if( !dladdr_real )
-		dladdr_real = dlsym( (void*)(size_t)(-1), "dladdr" );
+#define STACK_BACKTRACE_STR_LEN ( sizeof( STACK_BACKTRACE_STR ) - 1 )
+#define STACK_DUMP_STR_LEN      ( sizeof( STACK_DUMP_STR ) - 1 )
+#define ALIGN( x, y ) (((uintptr_t) ( x ) + (( y ) - 1 )) & ~(( y ) - 1 ))
 
-	memset( info, 0, sizeof( *info ) );
-
-	if( !dladdr_real )
-		return -1;
-
-	return dladdr_real(  sym, info );
-}
-#define dladdr d_dladdr
-#endif
+static struct sigaction oldFilter;
 
 static int Sys_PrintFrame( char *buf, int len, int i, void *addr )
 {
@@ -282,28 +370,18 @@ static int Sys_PrintFrame( char *buf, int len, int i, void *addr )
 		if( dlinfo.dli_sname )
 			return Q_snprintf( buf, len, "%2d: %p <%s+%lu> (%s)\n", i, addr, dlinfo.dli_sname,
 				(unsigned long)addr - (unsigned long)dlinfo.dli_saddr, dlinfo.dli_fname ); // print symbol, module and address
-		else
-			return Q_snprintf( buf, len, "%2d: %p (%s)\n", i, addr, dlinfo.dli_fname ); // print module and address
+
+		return Q_snprintf( buf, len, "%2d: %p (%s)\n", i, addr, dlinfo.dli_fname ); // print module and address
 	}
-	else
-		return Q_snprintf( buf, len, "%2d: %p\n", i, addr ); // print only address
+
+	return Q_snprintf( buf, len, "%2d: %p\n", i, addr ); // print only address
 }
-
-struct sigaction oldFilter;
-
-#define STACK_BACKTRACE_STR     "Stack backtrace:\n"
-#define STACK_DUMP_STR          "Stack dump:\n"
-
-#define STACK_BACKTRACE_STR_LEN (sizeof( STACK_BACKTRACE_STR ) - 1)
-#define STACK_DUMP_STR_LEN      (sizeof( STACK_DUMP_STR ) - 1)
-#define ALIGN( x, y ) (((uintptr_t) (x) + ((y)-1)) & ~((y)-1))
 
 static void Sys_Crash( int signal, siginfo_t *si, void *context)
 {
 	void *pc = NULL, **bp = NULL, **sp = NULL; // this must be set for every OS!
 	char message[8192];
 	int len, logfd, i = 0;
-	size_t pagesize;
 
 #if XASH_OPENBSD
 	struct sigcontext *ucontext = (struct sigcontext*)context;
@@ -317,9 +395,9 @@ static void Sys_Crash( int signal, siginfo_t *si, void *context)
 		bp = (void**)ucontext->uc_mcontext.mc_rbp;
 		sp = (void**)ucontext->uc_mcontext.mc_rsp;
 	#elif XASH_NETBSD
-		pc = (void*)ucontext->uc_mcontext.__gregs[REG_RIP];
-		bp = (void**)ucontext->uc_mcontext.__gregs[REG_RBP];
-		sp = (void**)ucontext->uc_mcontext.__gregs[REG_RSP];
+		pc = (void*)ucontext->uc_mcontext.__gregs[_REG_RIP];
+		bp = (void**)ucontext->uc_mcontext.__gregs[_REG_RBP];
+		sp = (void**)ucontext->uc_mcontext.__gregs[_REG_RSP];
 	#elif XASH_OPENBSD
 		pc = (void*)ucontext->sc_rip;
 		bp = (void**)ucontext->sc_rbp;
@@ -335,9 +413,9 @@ static void Sys_Crash( int signal, siginfo_t *si, void *context)
 		bp = (void**)ucontext->uc_mcontext.mc_ebp;
 		sp = (void**)ucontext->uc_mcontext.mc_esp;
 	#elif XASH_NETBSD
-		pc = (void*)ucontext->uc_mcontext.__gregs[REG_EIP];
-		bp = (void**)ucontext->uc_mcontext.__gregs[REG_EBP];
-		sp = (void**)ucontext->uc_mcontext.__gregs[REG_ESP];
+		pc = (void*)ucontext->uc_mcontext.__gregs[_REG_EIP];
+		bp = (void**)ucontext->uc_mcontext.__gregs[_REG_EBP];
+		sp = (void**)ucontext->uc_mcontext.__gregs[_REG_ESP];
 	#elif XASH_OPENBSD
 		pc = (void*)ucontext->sc_eip;
 		bp = (void**)ucontext->sc_ebp;
@@ -358,10 +436,10 @@ static void Sys_Crash( int signal, siginfo_t *si, void *context)
 #endif
 
 	// safe actions first, stack and memory may be corrupted
-	len = Q_snprintf( message, sizeof( message ), "Ver: %s %s (build %i-%s, %s-%s)\n",
-		XASH_ENGINE_NAME, XASH_VERSION, Q_buildnum(), Q_buildcommit(), Q_buildos(), Q_buildarch() );
+	len = Q_snprintf( message, sizeof( message ), "Ver: " XASH_ENGINE_NAME " " XASH_VERSION " (build %i-%s, %s-%s)\n",
+		Q_buildnum(), Q_buildcommit(), Q_buildos(), Q_buildarch() );
 
-#if !XASH_BSD
+#if !XASH_FREEBSD && !XASH_NETBSD && !XASH_OPENBSD
 	len += Q_snprintf( message + len, sizeof( message ) - len, "Crash: signal %d errno %d with code %d at %p %p\n", signal, si->si_errno, si->si_code, si->si_addr, si->si_ptr );
 #else
 	len += Q_snprintf( message + len, sizeof( message ) - len, "Crash: signal %d errno %d with code %d at %p\n", signal, si->si_errno, si->si_code, si->si_addr );
@@ -380,6 +458,7 @@ static void Sys_Crash( int signal, siginfo_t *si, void *context)
 	if( pc && bp && sp )
 	{
 		size_t pagesize = sysconf( _SC_PAGESIZE );
+
 		// try to print backtrace
 		write( STDERR_FILENO, STACK_BACKTRACE_STR, STACK_BACKTRACE_STR_LEN );
 		write( logfd, STACK_BACKTRACE_STR, STACK_BACKTRACE_STR_LEN );
@@ -434,20 +513,21 @@ static void Sys_Crash( int signal, siginfo_t *si, void *context)
 #ifdef XASH_SDL
 	SDL_SetWindowGrab( host.hWnd, SDL_FALSE );
 #endif
-	MSGBOX( message );
+	host.crashed = true;
+	Platform_MessageBox( "Xash Error", message, false );
 
 	// log saved, now we can try to save configs and close log correctly, it may crash
 	if( host.type == HOST_NORMAL )
 		CL_Crashed();
 	host.status = HOST_CRASHED;
-	host.crashed = true;
+
 
 	Sys_Quit();
 }
 
 void Sys_SetupCrashHandler( void )
 {
-	struct sigaction act;
+	struct sigaction act = { 0 };
 	act.sa_sigaction = Sys_Crash;
 	act.sa_flags = SA_SIGINFO | SA_ONSTACK;
 	sigaction( SIGSEGV, &act, &oldFilter );
@@ -464,7 +544,7 @@ void Sys_RestoreCrashHandler( void )
 	sigaction( SIGILL,  &oldFilter, NULL );
 }
 
-#elif XASH_CRASHHANDLER == CRASHHANDLER_NULL
+#else
 
 void Sys_SetupCrashHandler( void )
 {

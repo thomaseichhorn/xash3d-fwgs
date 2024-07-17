@@ -30,9 +30,6 @@ extern "C" {
 #include "crtlib.h"
 #include "platform/platform.h"
 
-#define MSGBOX( x )	Platform_MessageBox( "Xash Error", (x), false );
-#define MSGBOX2( x )	Platform_MessageBox( "Host Error", (x), true );
-#define MSGBOX3( x )	Platform_MessageBox( "Host Recursive Error", (x), true );
 #define ASSERT( exp )	if(!( exp )) Sys_Error( "assert failed at %s:%i\n", __FILE__, __LINE__ )
 
 /*
@@ -44,7 +41,7 @@ NOTE: never change this structure because all dll descriptions in xash code
 writes into struct by offsets not names
 ========================================================================
 */
-
+extern int error_on_exit;
 void Sys_Sleep( int msec );
 double Sys_DoubleTime( void );
 char *Sys_GetClipboardData( void );
@@ -56,9 +53,9 @@ qboolean Sys_LoadLibrary( dll_info_t *dll );
 void* Sys_GetProcAddress( dll_info_t *dll, const char* name );
 qboolean Sys_FreeLibrary( dll_info_t *dll );
 void Sys_ParseCommandLine( int argc, char **argv );
-void Sys_MergeCommandLine( void );
 void Sys_SetupCrashHandler( void );
 void Sys_RestoreCrashHandler( void );
+void Sys_DebugBreak( void );
 #define Sys_GetParmFromCmdLine( parm, out ) _Sys_GetParmFromCmdLine( parm, out, sizeof( out ))
 qboolean _Sys_GetParmFromCmdLine( const char *parm, char *out, size_t size );
 qboolean Sys_GetIntFromCmdLine( const char *parm, int *out );
@@ -69,6 +66,7 @@ void Sys_InitLog( void );
 void Sys_CloseLog( void );
 void Sys_Quit( void ) NORETURN;
 qboolean Sys_NewInstance( const char *gamedir );
+void *Sys_GetNativeObject( const char *obj );
 
 //
 // sys_con.c

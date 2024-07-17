@@ -18,7 +18,7 @@ GNU General Public License for more details.
 // global sound variables
 sndlib_t	sound;
 
-void Sound_Reset( void )
+static void Sound_Reset( void )
 {
 	// reset global variables
 	sound.width = sound.rate = 0;
@@ -30,7 +30,7 @@ void Sound_Reset( void )
 	sound.size = 0;
 }
 
-wavdata_t *SoundPack( void )
+static wavdata_t *SoundPack( void )
 {
 	wavdata_t	*pack = Mem_Calloc( host.soundpool, sizeof( wavdata_t ));
 
@@ -66,7 +66,7 @@ wavdata_t *FS_LoadSound( const char *filename, const byte *buffer, size_t size )
 	Sound_Reset(); // clear old sounddata
 	Q_strncpy( loadname, filename, sizeof( loadname ));
 
-	if( Q_stricmp( ext, "" ))
+	if( COM_CheckStringEmpty( ext ))
 	{
 		// we needs to compare file extension with list of supported formats
 		// and be sure what is real extension, not a filename with dot
@@ -90,7 +90,9 @@ wavdata_t *FS_LoadSound( const char *filename, const byte *buffer, size_t size )
 	{
 		if( anyformat || !Q_stricmp( ext, format->ext ))
 		{
-			Q_sprintf( path, format->formatstring, loadname, "", format->ext );
+			Q_snprintf( path, sizeof( path ),
+				format->formatstring, loadname, "", format->ext );
+
 			f = FS_LoadFile( path, &filesize, false );
 			if( f && filesize > 0 )
 			{
@@ -118,7 +120,7 @@ load_internal:
 	}
 
 	if( filename[0] != '#' )
-		Con_DPrintf( S_WARN "FS_LoadSound: couldn't load \"%s\"\n", loadname );
+		Con_DPrintf( S_WARN "%s: couldn't load \"%s\"\n", __func__, loadname );
 
 	return NULL;
 }
@@ -150,12 +152,12 @@ stream_t *FS_OpenStream( const char *filename )
 	string		path, loadname;
 	qboolean		anyformat = true;
 	const streamfmt_t	*format;
-	stream_t		*stream;
+	stream_t		*stream = NULL;
 
 	Sound_Reset(); // clear old streaminfo
 	Q_strncpy( loadname, filename, sizeof( loadname ));
 
-	if( Q_stricmp( ext, "" ))
+	if( COM_CheckStringEmpty( ext ))
 	{
 		// we needs to compare file extension with list of supported formats
 		// and be sure what is real extension, not a filename with dot
@@ -175,7 +177,9 @@ stream_t *FS_OpenStream( const char *filename )
 	{
 		if( anyformat || !Q_stricmp( ext, format->ext ))
 		{
-			Q_sprintf( path, format->formatstring, loadname, "", format->ext );
+			Q_snprintf( path, sizeof( path ),
+				format->formatstring, loadname, "", format->ext );
+
 			if(( stream = format->openfunc( path )) != NULL )
 			{
 				stream->format = format;
@@ -184,9 +188,18 @@ stream_t *FS_OpenStream( const char *filename )
 		}
 	}
 
-	Con_Reportf( "FS_OpenStream: couldn't open \"%s\"\n", loadname );
+	// compatibility with original Xash3D, try media/ folder
+	if( Q_strncmp( filename, "media/", sizeof( "media/" ) - 1 ))
+	{
+		Q_snprintf( loadname, sizeof( loadname ), "media/%s", filename );
+		stream = FS_OpenStream( loadname );
+	}
+	else
+	{
+		Con_Reportf( "%s: couldn't open \"%s\" or \"%s\"\n", __func__, filename + 6, filename );
+	}
 
-	return NULL;
+	return stream;
 }
 
 /*
@@ -203,7 +216,7 @@ wavdata_t *FS_StreamInfo( stream_t *stream )
 	if( !stream ) return NULL;
 
 	// fill structure
-	info.loopStart = -1;
+	info.loopStart = 0;
 	info.rate = stream->rate;
 	info.width = stream->width;
 	info.channels = stream->channels;
@@ -280,8 +293,8 @@ void FS_FreeStream( stream_t *stream )
 }
 
 #if XASH_ENGINE_TESTS
-
 #define IMPLEMENT_SOUNDLIB_FUZZ_TARGET( export, target ) \
+int EXPORT export( const uint8_t *Data, size_t Size ); \
 int EXPORT export( const uint8_t *Data, size_t Size ) \
 { \
 	wavdata_t *wav; \

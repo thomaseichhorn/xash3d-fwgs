@@ -48,7 +48,7 @@ SampleMiptex
 fence texture testing
 =============
 */
-int PM_SampleMiptex( const msurface_t *surf, const vec3_t point )
+static int PM_SampleMiptex( const msurface_t *surf, const vec3_t point )
 {
 	mextrasurf_t	*info = surf->info;
 	mfacebevel_t	*fb = info->bevel;
@@ -216,30 +216,12 @@ msurface_t *PM_TraceSurface( physent_t *pe, vec3_t start, vec3_t end )
 
 /*
 ==================
-PM_TraceTexture
-
-find the face where the traceline hit
-assume physentity is valid
-==================
-*/
-const char *PM_TraceTexture( physent_t *pe, vec3_t start, vec3_t end )
-{
-	msurface_t	*surf = PM_TraceSurface( pe, start, end );
-
-	if( !surf || !surf->texinfo || !surf->texinfo->texture )
-		return NULL;
-
-	return surf->texinfo->texture->name;
-}
-
-/*
-==================
 PM_TestLine_r
 
 optimized trace for light gathering
 ==================
 */
-int PM_TestLine_r( model_t *mod, mnode_t *node, vec_t p1f, vec_t p2f, const vec3_t start, const vec3_t stop, linetrace_t *trace )
+static int PM_TestLine_r( model_t *mod, mnode_t *node, vec_t p1f, vec_t p2f, const vec3_t start, const vec3_t stop, linetrace_t *trace )
 {
 	float	front, back;
 	float	frac, midf;

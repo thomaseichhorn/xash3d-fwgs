@@ -169,7 +169,7 @@ int WAI_PREFIX(getModulePath)(char* out, int capacity, int* dirname_length)
   return length;
 }
 
-#elif defined(__linux__) || defined(__CYGWIN__) || defined(__sun) || defined(WAI_USE_PROC_SELF_EXE)
+#elif defined(__linux__) || defined(__CYGWIN__) || defined(__sun) || defined(__serenity__) || defined(WAI_USE_PROC_SELF_EXE)
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -632,12 +632,14 @@ int WAI_PREFIX(getExecutablePath)(char* out, int capacity, int* dirname_length)
     else
     {
       const char* PATH = getenv("PATH");
+      const char* begin;
+      size_t argv0_length;
       if (!PATH)
         break;
 
-      size_t argv0_length = strlen(argv[0]);
+      argv0_length = strlen(argv[0]);
 
-      const char* begin = PATH;
+      begin = PATH;
       while (1)
       {
         const char* separator = strchr(begin, ':');
@@ -793,6 +795,49 @@ int WAI_PREFIX(getModulePath)(char* out, int capacity, int* dirname_length)
   }
 
   return length;
+}
+
+#elif defined(__sgi)
+
+/*
+ * These functions are stubbed for now to get the code compiling.
+ * In the future it may be possible to get these working in some way.
+ * Current ideas are checking the working directory for a binary with
+ * the same executed name and reading links, or worst case just searching
+ * through the entirety of the filesystem that's readable by the user.
+ *
+ * I'm not sure it's actually possible to find the absolute path via a
+ * direct method on IRIX. Its implementation of /proc is a fairly barebones
+ * SVR4 implementation. Other UNIXes (e.g. Solaris) have extensions to /proc
+ * that make finding the absolute path possible but these don't exist on IRIX.
+ */
+
+WAI_FUNCSPEC
+int WAI_PREFIX(getExecutablePath)(char* out, int capacity, int* dirname_length)
+{
+  return -1;
+}
+
+WAI_FUNCSPEC
+int WAI_PREFIX(getModulePath)(char* out, int capacity, int* dirname_length)
+{
+  return -1;
+}
+
+#elif defined(__SWITCH__) || defined(__vita__)
+
+/* Not possible on this platform */
+
+WAI_FUNCSPEC
+int WAI_PREFIX(getExecutablePath)(char* out, int capacity, int* dirname_length)
+{
+  return -1;
+}
+
+WAI_FUNCSPEC
+int WAI_PREFIX(getModulePath)(char* out, int capacity, int* dirname_length)
+{
+  return -1;
 }
 
 #else

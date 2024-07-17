@@ -57,35 +57,7 @@ const char *cl_default_sprites[] =
 	"sprites/shellchrome.spr",
 };
 
-const char *cl_player_shell_sounds[] =
-{
-	"player/pl_shell1.wav",
-	"player/pl_shell2.wav",
-	"player/pl_shell3.wav",
-};
-
-const char *cl_weapon_shell_sounds[] =
-{
-	"weapons/sshell1.wav",
-	"weapons/sshell2.wav",
-	"weapons/sshell3.wav",
-};
-
-const char *cl_ricochet_sounds[] =
-{
-	"weapons/ric1.wav",
-	"weapons/ric2.wav",
-	"weapons/ric3.wav",
-	"weapons/ric4.wav",
-	"weapons/ric5.wav",
-};
-
-const char *cl_explode_sounds[] =
-{
-	"weapons/explode3.wav",
-	"weapons/explode4.wav",
-	"weapons/explode5.wav",
-};
+static void CL_PlayerDecal( int playerIndex, int textureIndex, int entityIndex, float *pos );
 
 /*
 ================
@@ -146,6 +118,7 @@ client resources not precached by server
 */
 void CL_AddClientResources( void )
 {
+	const char *snd;
 	char	filepath[MAX_QPATH];
 	int	i;
 
@@ -161,37 +134,37 @@ void CL_AddClientResources( void )
 	}
 
 	// then check sounds
-	for( i = 0; i < ARRAYSIZE( cl_player_shell_sounds ); i++ )
+	for( i = 0; ( snd = SoundList_Get( BouncePlayerShell, i )); i++ )
 	{
-		Q_snprintf( filepath, sizeof( filepath ), DEFAULT_SOUNDPATH "%s", cl_player_shell_sounds[i] );
+		Q_snprintf( filepath, sizeof( filepath ), DEFAULT_SOUNDPATH "%s", snd );
 
 		if( !FS_FileExists( filepath, false ))
-			CL_AddClientResource( cl_player_shell_sounds[i], t_sound );
+			CL_AddClientResource( snd, t_sound );
 	}
 
-	for( i = 0; i < ARRAYSIZE( cl_weapon_shell_sounds ); i++ )
+	for( i = 0; ( snd = SoundList_Get( BounceWeaponShell, i )); i++ )
 	{
-		Q_snprintf( filepath, sizeof( filepath ), DEFAULT_SOUNDPATH "%s", cl_weapon_shell_sounds[i] );
+		Q_snprintf( filepath, sizeof( filepath ), DEFAULT_SOUNDPATH "%s", snd );
 
 		if( !FS_FileExists( filepath, false ))
-			CL_AddClientResource( cl_weapon_shell_sounds[i], t_sound );
+			CL_AddClientResource( snd, t_sound );
 	}
 
-	for( i = 0; i < ARRAYSIZE( cl_explode_sounds ); i++ )
+	for( i = 0; ( snd = SoundList_Get( Explode, i )); i++ )
 	{
-		Q_snprintf( filepath, sizeof( filepath ), DEFAULT_SOUNDPATH "%s", cl_explode_sounds[i] );
+		Q_snprintf( filepath, sizeof( filepath ), DEFAULT_SOUNDPATH "%s", snd );
 
 		if( !FS_FileExists( filepath, false ))
-			CL_AddClientResource( cl_explode_sounds[i], t_sound );
+			CL_AddClientResource( snd, t_sound );
 	}
 
 #if 0	// ric sounds was precached by server-side
-	for( i = 0; i < ARRAYSIZE( cl_ricochet_sounds ); i++ )
+	for( i = 0; ( snd = SoundList_Get( Ricochet, i )); i++ )
 	{
-		Q_snprintf( filepath, sizeof( filepath ), DEFAULT_SOUNDPATH "%s", cl_ricochet_sounds[i] );
+		Q_snprintf( filepath, sizeof( filepath ), DEFAULT_SOUNDPATH "%s", snd );
 
 		if( !FS_FileExists( filepath, false ))
-			CL_AddClientResource( cl_ricochet_sounds[i], t_sound );
+			CL_AddClientResource( snd, t_sound );
 	}
 #endif
 }
@@ -255,7 +228,7 @@ CL_PrepareTEnt
 set default values
 ==============
 */
-void CL_PrepareTEnt( TEMPENTITY *pTemp, model_t *pmodel )
+static void CL_PrepareTEnt( TEMPENTITY *pTemp, model_t *pmodel )
 {
 	int	frameCount = 0;
 	int	modelIndex = 0;
@@ -296,10 +269,10 @@ CL_TempEntPlaySound
 play collide sound
 ==============
 */
-void CL_TempEntPlaySound( TEMPENTITY *pTemp, float damp )
+static void CL_TempEntPlaySound( TEMPENTITY *pTemp, float damp )
 {
 	float	fvol;
-	char	soundname[32];
+	const char	*soundname = NULL;
 	qboolean	isshellcasing = false;
 	int	zvel;
 
@@ -310,35 +283,38 @@ void CL_TempEntPlaySound( TEMPENTITY *pTemp, float damp )
 	switch( pTemp->hitSound )
 	{
 	case BOUNCE_GLASS:
-		Q_snprintf( soundname, sizeof( soundname ), "debris/glass%i.wav", COM_RandomLong( 1, 4 ));
+		soundname = SoundList_GetRandom( BounceGlass );
 		break;
 	case BOUNCE_METAL:
-		Q_snprintf( soundname, sizeof( soundname ), "debris/metal%i.wav", COM_RandomLong( 1, 6 ));
+		soundname = SoundList_GetRandom( BounceMetal );
 		break;
 	case BOUNCE_FLESH:
-		Q_snprintf( soundname, sizeof( soundname ), "debris/flesh%i.wav", COM_RandomLong( 1, 7 ));
+		soundname = SoundList_GetRandom( BounceFlesh );
 		break;
 	case BOUNCE_WOOD:
-		Q_snprintf( soundname, sizeof( soundname ), "debris/wood%i.wav", COM_RandomLong( 1, 4 ));
+		soundname = SoundList_GetRandom( BounceWood );
 		break;
 	case BOUNCE_SHRAP:
-		Q_strncpy( soundname, cl_ricochet_sounds[COM_RandomLong( 0, 4 )], sizeof( soundname ) );
+		soundname = SoundList_GetRandom( Ricochet );
 		break;
 	case BOUNCE_SHOTSHELL:
-		Q_strncpy( soundname, cl_weapon_shell_sounds[COM_RandomLong( 0, 2 )], sizeof( soundname ) );
+		soundname = SoundList_GetRandom( BounceWeaponShell );
 		isshellcasing = true; // shell casings have different playback parameters
 		fvol = 0.5f;
 		break;
 	case BOUNCE_SHELL:
-		Q_strncpy( soundname, cl_player_shell_sounds[COM_RandomLong( 0, 2 )], sizeof( soundname ) );
+		soundname = SoundList_GetRandom( BouncePlayerShell );
 		isshellcasing = true; // shell casings have different playback parameters
 		break;
 	case BOUNCE_CONCRETE:
-		Q_snprintf( soundname, sizeof( soundname ), "debris/concrete%i.wav", COM_RandomLong( 1, 3 ));
+		soundname = SoundList_GetRandom( BounceConcrete );
 		break;
 	default:	// null sound
 		return;
 	}
+
+	if( !soundname )
+		return;
 
 	zvel = abs( pTemp->entity.baseline.origin[2] );
 
@@ -380,7 +356,7 @@ CL_TEntAddEntity
 add entity to renderlist
 ==============
 */
-int CL_TempEntAddEntity( cl_entity_t *pEntity )
+static int CL_TempEntAddEntity( cl_entity_t *pEntity )
 {
 	vec3_t mins, maxs;
 
@@ -432,7 +408,7 @@ CL_TEntAddEntity
 free the first low priority tempent it finds.
 ==============
 */
-qboolean CL_FreeLowPriorityTempEnt( void )
+static qboolean CL_FreeLowPriorityTempEnt( void )
 {
 	TEMPENTITY	*pActive = cl_active_tents;
 	TEMPENTITY	*pPrev = NULL;
@@ -1037,7 +1013,7 @@ void GAME_EXPORT R_BreakModel( const vec3_t pos, const vec3_t size, const vec3_t
 			vecSpot[1] = pos[1] + COM_RandomFloat( -0.5f, 0.5f ) * size[1];
 			vecSpot[2] = pos[2] + COM_RandomFloat( -0.5f, 0.5f ) * size[2];
 
-			if( CL_PointContents( vecSpot ) != CONTENTS_SOLID )
+			if( PM_CL_PointContents( vecSpot, NULL ) != CONTENTS_SOLID )
 				break; // valid spot
 		}
 
@@ -1245,37 +1221,28 @@ apply params for exploding sprite
 */
 void GAME_EXPORT R_Sprite_Explode( TEMPENTITY *pTemp, float scale, int flags )
 {
-	if( !pTemp ) return;
+	qboolean noadditive, drawalpha, rotate;
 
-	if( FBitSet( flags, TE_EXPLFLAG_NOADDITIVE ))
-	{
-		// solid sprite
-		pTemp->entity.curstate.rendermode = kRenderNormal;
-		pTemp->entity.curstate.renderamt = 255;
-	}
-	else if( FBitSet( flags, TE_EXPLFLAG_DRAWALPHA ))
-	{
-		// alpha sprite (came from hl2)
-		pTemp->entity.curstate.rendermode = kRenderTransAlpha;
-		pTemp->entity.curstate.renderamt = 180;
-	}
-	else
-	{
-		// additive sprite
-		pTemp->entity.curstate.rendermode = kRenderTransAdd;
-		pTemp->entity.curstate.renderamt = 180;
-	}
+	if( !pTemp )
+		return;
 
-	if( FBitSet( flags, TE_EXPLFLAG_ROTATE ))
-	{
-		// came from hl2
-		pTemp->entity.angles[2] = COM_RandomLong( 0, 360 );
-	}
+	noadditive = FBitSet( flags, TE_EXPLFLAG_NOADDITIVE );
+	drawalpha  = FBitSet( flags, TE_EXPLFLAG_DRAWALPHA );
+	rotate     = FBitSet( flags, TE_EXPLFLAG_ROTATE );
 
-	pTemp->entity.curstate.renderfx = kRenderFxNone;
-	pTemp->entity.baseline.origin[2] = 8;
-	pTemp->entity.origin[2] += 10;
 	pTemp->entity.curstate.scale = scale;
+	pTemp->entity.baseline.origin[2] = 8.0f;
+	pTemp->entity.origin[2] = pTemp->entity.origin[2] + 10.0f;
+	if( rotate )
+		pTemp->entity.angles[2] = COM_RandomFloat( 0.0, 360.0f );
+
+	pTemp->entity.curstate.rendermode = noadditive ? kRenderNormal :
+		drawalpha ? kRenderTransAlpha : kRenderTransAdd;
+	pTemp->entity.curstate.renderamt  = noadditive ? 0xff : 0xb4;
+	pTemp->entity.curstate.renderfx = 0;
+	pTemp->entity.curstate.rendercolor.r = 0;
+	pTemp->entity.curstate.rendercolor.g = 0;
+	pTemp->entity.curstate.rendercolor.b = 0;
 }
 
 /*
@@ -1498,7 +1465,7 @@ void GAME_EXPORT R_FunnelSprite( const vec3_t org, int modelIndex, int reverse )
 ===============
 R_SparkEffect
 
-Create a streaks + richochet sprite
+Create a streaks + ricochet sprite
 ===============
 */
 void GAME_EXPORT R_SparkEffect( const vec3_t pos, int count, int velocityMin, int velocityMax )
@@ -1514,18 +1481,25 @@ R_RicochetSound
 Make a random ricochet sound
 ==============
 */
-static void R_RicochetSound_( const vec3_t pos, int sound )
+static void R_RicochetSoundByName( const vec3_t pos, const char *name )
 {
-	sound_t	handle;
-
-	handle = S_RegisterSound( cl_ricochet_sounds[sound] );
-
+	sound_t handle;
+	handle = S_RegisterSound( name );
 	S_StartSound( pos, 0, CHAN_AUTO, handle, VOL_NORM, 1.0, 100, 0 );
+}
+
+static void R_RicochetSoundByIndex( const vec3_t pos, int idx )
+{
+	const char *name = SoundList_Get( Ricochet, idx );
+	if( name )
+		R_RicochetSoundByName( pos, name );
 }
 
 void GAME_EXPORT R_RicochetSound( const vec3_t pos )
 {
-	R_RicochetSound_( pos, COM_RandomLong( 0, 4 ));
+	const char *name = SoundList_GetRandom( Ricochet );
+	if( name )
+		R_RicochetSoundByName( pos, name );
 }
 
 /*
@@ -1672,8 +1646,12 @@ void GAME_EXPORT R_Explosion( vec3_t pos, int model, float scale, float framerat
 
 	if( !FBitSet( flags, TE_EXPLFLAG_NOSOUND ))
 	{
-		hSound = S_RegisterSound( cl_explode_sounds[COM_RandomLong( 0, 2 )] );
-		S_StartSound( pos, 0, CHAN_STATIC, hSound, VOL_NORM, 0.3f, PITCH_NORM, 0 );
+		const char *name = SoundList_GetRandom( Explode );
+		if( name )
+		{
+			hSound = S_RegisterSound( name );
+			S_StartSound( pos, 0, CHAN_STATIC, hSound, VOL_NORM, 0.3f, PITCH_NORM, 0 );
+		}
 	}
 }
 
@@ -1916,6 +1894,7 @@ void CL_ParseTempEntity( sizebuf_t *msg )
 	cl_entity_t	*pEnt;
 	dlight_t		*dl;
 	sound_t	hSound;
+	const char *name;
 
 	if( cls.legacymode )
 		iSize = MSG_ReadByte( msg );
@@ -1925,7 +1904,7 @@ void CL_ParseTempEntity( sizebuf_t *msg )
 
 	// this will probably be fatal anyway
 	if( iSize > sizeof( pbuf ))
-		Con_Printf( S_ERROR "%s: Temp buffer overflow!\n", __FUNCTION__ );
+		Con_Printf( S_ERROR "%s: Temp buffer overflow!\n", __func__ );
 
 	// parse user message into buffer
 	MSG_ReadBytes( msg, pbuf, iSize );
@@ -1974,6 +1953,12 @@ void CL_ParseTempEntity( sizebuf_t *msg )
 		pos[1] = MSG_ReadCoord( &buf );
 		pos[2] = MSG_ReadCoord( &buf );
 		R_BlobExplosion( pos );
+
+		if(( name = SoundList_Get( Explode, 0 )))
+		{
+			hSound = S_RegisterSound( name );
+			S_StartSound( pos, -1, CHAN_AUTO, hSound, VOL_NORM, 1.0f, PITCH_NORM, 0 );
+		}
 		break;
 	case TE_SMOKE:
 		pos[0] = MSG_ReadCoord( &buf );
@@ -2026,8 +2011,11 @@ void CL_ParseTempEntity( sizebuf_t *msg )
 		dl->die = cl.time + 0.5;
 		dl->decay = 300;
 
-		hSound = S_RegisterSound( cl_explode_sounds[0] );
-		S_StartSound( pos, 0, CHAN_STATIC, hSound, VOL_NORM, 0.6f, PITCH_NORM, 0 );
+		if(( name = SoundList_Get( Explode, 0 )))
+		{
+			hSound = S_RegisterSound( name );
+			S_StartSound( pos, -1, CHAN_AUTO, hSound, VOL_NORM, 1.0f, PITCH_NORM, 0 );
+		}
 		break;
 	case TE_BSPDECAL:
 	case TE_DECAL:
@@ -2255,8 +2243,8 @@ void CL_ParseTempEntity( sizebuf_t *msg )
 		CL_DecalShoot( CL_DecalIndex( decalIndex ), entityIndex, 0, pos, 0 );
 		R_BulletImpactParticles( pos );
 		flags = COM_RandomLong( 0, 0x7fff );
-		if( flags < 0x3fff )
-			R_RicochetSound_( pos, flags % 5 );
+		if( flags < 0x3fff && ( count = SoundList_Count( Ricochet )))
+			R_RicochetSoundByIndex( pos, flags % count );
 		break;
 	case TE_SPRAY:
 	case TE_SPRITE_SPRAY:
@@ -2396,13 +2384,13 @@ void CL_ParseTempEntity( sizebuf_t *msg )
 		R_UserTracerParticle( pos, pos2, life, color, scale, 0, NULL );
 		break;
 	default:
-		Con_DPrintf( S_ERROR "ParseTempEntity: illegible TE message %i\n", type );
+		Con_DPrintf( S_ERROR "%s: illegible TE message %i\n", __func__, type );
 		break;
 	}
 
 	// throw warning
 	if( MSG_CheckOverflow( &buf ))
-		Con_DPrintf( S_WARN "ParseTempEntity: overflow TE message %i\n", type );
+		Con_DPrintf( S_WARN "%s: overflow TE message %i\n", __func__, type );
 }
 
 
@@ -2420,7 +2408,7 @@ LIGHT STYLE MANAGEMENT
 CL_ClearLightStyles
 ================
 */
-void CL_ClearLightStyles( void )
+static void CL_ClearLightStyles( void )
 {
 	memset( cl.lightstyles, 0, sizeof( cl.lightstyles ));
 }
@@ -2478,7 +2466,7 @@ dlight_t	cl_elights[MAX_ELIGHTS];
 CL_ClearDlights
 ================
 */
-void CL_ClearDlights( void )
+static void CL_ClearDlights( void )
 {
 	memset( cl_dlights, 0, sizeof( cl_dlights ));
 	memset( cl_elights, 0, sizeof( cl_elights ));
@@ -2630,12 +2618,12 @@ CL_UpdateFlashlight
 update client flashlight
 ================
 */
-void CL_UpdateFlashlight( cl_entity_t *ent )
+static void CL_UpdateFlashlight( cl_entity_t *ent )
 {
 	vec3_t		forward, view_ofs;
 	vec3_t		vecSrc, vecEnd;
 	float		falloff;
-	pmtrace_t		*trace;
+	pmtrace_t		trace;
 	cl_entity_t	*hit;
 	dlight_t		*dl;
 
@@ -2666,30 +2654,63 @@ void CL_UpdateFlashlight( cl_entity_t *ent )
 	VectorAdd( ent->origin, view_ofs, vecSrc );
 	VectorMA( vecSrc, FLASHLIGHT_DISTANCE, forward, vecEnd );
 
-	trace = CL_VisTraceLine( vecSrc, vecEnd, PM_STUDIO_BOX );
+	trace = CL_TraceLine( vecSrc, vecEnd, PM_STUDIO_BOX );
 
 	// update flashlight endpos
 	dl = CL_AllocDlight( ent->index );
 #if 1
-	hit = CL_GetEntityByIndex( clgame.pmove->visents[trace->ent].info );
+	hit = CL_GetEntityByIndex( clgame.pmove->physents[trace.ent].info );
 	if( hit && hit->model && ( hit->model->type == mod_alias || hit->model->type == mod_studio ))
 		VectorCopy( hit->origin, dl->origin );
-	else VectorCopy( trace->endpos, dl->origin );
+	else VectorCopy( trace.endpos, dl->origin );
 #else
 	VectorCopy( trace->endpos, dl->origin );
 #endif
 	// compute falloff
-	falloff = trace->fraction * FLASHLIGHT_DISTANCE;
+	falloff = trace.fraction * FLASHLIGHT_DISTANCE;
 	if( falloff < 500.0f ) falloff = 1.0f;
 	else falloff = 500.0f / falloff;
 	falloff *= falloff;
 
 	// apply brigthness to dlight
-	dl->color.r = bound( 0, falloff * 255, 255 );
-	dl->color.g = bound( 0, falloff * 255, 255 );
-	dl->color.b = bound( 0, falloff * 255, 255 );
+	dl->color.r = dl->color.g = dl->color.b = bound( 0, falloff * 255, 255 );
 	dl->die = cl.time + 0.01f; // die on next frame
 	dl->radius = 80;
+}
+
+static void R_EntityDimlight( cl_entity_t *ent, int key )
+{
+	dlight_t *dl = CL_AllocDlight( key );
+
+	VectorCopy( ent->origin, dl->origin );
+	dl->color.r = dl->color.g = dl->color.b = 100;
+	dl->radius = COM_RandomFloat( 200.0f, 231.0f );
+	dl->die = cl.time + 0.001;
+}
+
+static void R_EntityLight( cl_entity_t *ent, int key )
+{
+	dlight_t *dl = CL_AllocDlight( key );
+
+	VectorCopy( ent->origin, dl->origin );
+	dl->color.r = dl->color.g = dl->color.b = 100;
+	dl->radius = 200;
+	dl->die = cl.time + 0.001;
+
+	R_RocketFlare( ent->origin );
+}
+
+static void R_EntityBrightlight( cl_entity_t *ent, int key, int radius )
+{
+	dlight_t *dl = CL_AllocDlight( key );
+
+	VectorCopy( ent->origin, dl->origin );
+	dl->origin[2] += 16.0f;
+	dl->color.r = dl->color.g = dl->color.b = 250;
+	if( !radius )
+		dl->radius = COM_RandomFloat( 400.0f, 431.0f );
+	else dl->radius = 400;
+	dl->die = cl.time + 0.001;
 }
 
 /*
@@ -2701,50 +2722,41 @@ apply various effects to entity origin or attachment
 */
 void CL_AddEntityEffects( cl_entity_t *ent )
 {
-	// yellow flies effect 'monster stuck in the wall'
-	if( FBitSet( ent->curstate.effects, EF_BRIGHTFIELD ) && !RP_LOCALCLIENT( ent ))
-		R_EntityParticles( ent );
-
-	if( FBitSet( ent->curstate.effects, EF_DIMLIGHT ))
+	// players have special set of effects, from CL_LinkPlayers
+	if( ent->player && ent->index != cl.viewentity )
 	{
-		if( ent->player && !Host_IsQuakeCompatible( ))
-		{
+		if( FBitSet( ent->curstate.effects, EF_BRIGHTLIGHT ))
+			R_EntityBrightlight( ent, ent->index /* 4 in GoldSrc */, 0 );
+
+		if( FBitSet( ent->curstate.effects, EF_DIMLIGHT ))
+			R_EntityDimlight( ent, ent->index /* 4 in GoldSrc */ );
+	}
+	else if( RP_LOCALCLIENT( ent ))
+	{
+		// from CL_PlayerFlashlight
+		if( FBitSet( ent->curstate.effects, EF_BRIGHTLIGHT ))
+			R_EntityBrightlight( ent, ent->index /* 1 in GoldSrc */, 400 );
+		else if( FBitSet( ent->curstate.effects, EF_DIMLIGHT ))
 			CL_UpdateFlashlight( ent );
-		}
-		else
-		{
-			dlight_t	*dl = CL_AllocDlight( ent->index );
-			dl->color.r = dl->color.g = dl->color.b = 100;
-			dl->radius = COM_RandomFloat( 200, 231 );
-			VectorCopy( ent->origin, dl->origin );
-			dl->die = cl.time + 0.001;
-		}
 	}
-
-	if( FBitSet( ent->curstate.effects, EF_BRIGHTLIGHT ))
+	else
 	{
-		dlight_t	*dl = CL_AllocDlight( ent->index );
-		dl->color.r = dl->color.g = dl->color.b = 250;
-		if( ent->player ) dl->radius = 400; // don't flickering
-		else dl->radius = COM_RandomFloat( 400, 431 );
-		VectorCopy( ent->origin, dl->origin );
-		dl->die = cl.time + 0.001;
-		dl->origin[2] += 16.0f;
-	}
+		// from CL_LinkPacketEntities
+		if( FBitSet( ent->curstate.effects, EF_BRIGHTFIELD ))
+			R_EntityParticles( ent );
 
-	// add light effect
-	if( FBitSet( ent->curstate.effects, EF_LIGHT ))
-	{
-		dlight_t	*dl = CL_AllocDlight( ent->index );
-		dl->color.r = dl->color.g = dl->color.b = 100;
-		VectorCopy( ent->origin, dl->origin );
-		R_RocketFlare( ent->origin );
-		dl->die = cl.time + 0.001;
-		dl->radius = 200;
+		if( FBitSet( ent->curstate.effects, EF_BRIGHTLIGHT ))
+			R_EntityBrightlight( ent, ent->index, 0 );
+
+		if( FBitSet( ent->curstate.effects, EF_DIMLIGHT ))
+			R_EntityDimlight( ent, ent->index );
+
+		if( FBitSet( ent->curstate.effects, EF_LIGHT ))
+			R_EntityLight( ent, ent->curstate.number );
 	}
 
 	// studio models are handle muzzleflashes difference
-	if( FBitSet( ent->curstate.effects, EF_MUZZLEFLASH ) && Mod_AliasExtradata( ent->model ))
+	if( FBitSet( ent->curstate.effects, EF_MUZZLEFLASH ) && ent->model && ent->model->type == mod_alias )
 	{
 		dlight_t	*dl = CL_AllocDlight( ent->index );
 		vec3_t	fv;
@@ -2773,15 +2785,11 @@ void CL_AddModelEffects( cl_entity_t *ent )
 	vec3_t	neworigin;
 	vec3_t	oldorigin;
 
-	if( !ent->model ) return;
+	if( !ent->model || ent->player )
+		return;
 
-	switch( ent->model->type )
-	{
-	case mod_alias:
-	case mod_studio:
-		break;
-	default:	return;
-	}
+	if( ent->model->type != mod_alias && ent->model->type != mod_studio )
+		return;
 
 	if( cls.demoplayback == DEMO_QUAKE1 )
 	{
@@ -2801,19 +2809,15 @@ void CL_AddModelEffects( cl_entity_t *ent )
 
 	if( FBitSet( ent->model->flags, STUDIO_GIB ))
 		R_RocketTrail( oldorigin, neworigin, 2 );
-
-	if( FBitSet( ent->model->flags, STUDIO_ZOMGIB ))
+	else if( FBitSet( ent->model->flags, STUDIO_ZOMGIB ))
 		R_RocketTrail( oldorigin, neworigin, 4 );
-
-	if( FBitSet( ent->model->flags, STUDIO_TRACER ))
+	else if( FBitSet( ent->model->flags, STUDIO_TRACER ))
 		R_RocketTrail( oldorigin, neworigin, 3 );
-
-	if( FBitSet( ent->model->flags, STUDIO_TRACER2 ))
+	else if( FBitSet( ent->model->flags, STUDIO_TRACER2 ))
 		R_RocketTrail( oldorigin, neworigin, 5 );
-
-	if( FBitSet( ent->model->flags, STUDIO_ROCKET ))
+	else if( FBitSet( ent->model->flags, STUDIO_ROCKET ))
 	{
-		dlight_t	*dl = CL_AllocDlight( ent->index );
+		dlight_t	*dl = CL_AllocDlight( ent->curstate.number );
 
 		dl->color.r = dl->color.g = dl->color.b = 200;
 		VectorCopy( ent->origin, dl->origin );
@@ -2827,11 +2831,9 @@ void CL_AddModelEffects( cl_entity_t *ent )
 
 		R_RocketTrail( oldorigin, neworigin, 0 );
 	}
-
-	if( FBitSet( ent->model->flags, STUDIO_GRENADE ))
+	else if( FBitSet( ent->model->flags, STUDIO_GRENADE ))
 		R_RocketTrail( oldorigin, neworigin, 1 );
-
-	if( FBitSet( ent->model->flags, STUDIO_TRACER3 ))
+	else if( FBitSet( ent->model->flags, STUDIO_TRACER3 ))
 		R_RocketTrail( oldorigin, neworigin, 6 );
 }
 
@@ -2849,10 +2851,10 @@ void CL_TestLights( void )
 	float	f, r;
 	dlight_t	*dl;
 
-	if( !CVAR_TO_BOOL( cl_testlights ))
+	if( !cl_testlights.value )
 		return;
 
-	numLights = bound( 1, cl_testlights->value, MAX_DLIGHTS );
+	numLights = bound( 1, cl_testlights.value, MAX_DLIGHTS );
 	AngleVectors( cl.viewangles, forward, right, NULL );
 
 	for( i = 0; i < numLights; i++ )
@@ -2911,7 +2913,7 @@ CL_PlayerDecal
 spray custom colored decal (clan logo etc)
 ===============
 */
-void CL_PlayerDecal( int playernum, int customIndex, int entityIndex, float *pos )
+static void CL_PlayerDecal( int playernum, int customIndex, int entityIndex, float *pos )
 {
 	int		textureIndex = 0;
 	customization_t	*pCust = NULL;
@@ -2925,8 +2927,26 @@ void CL_PlayerDecal( int playernum, int customIndex, int entityIndex, float *pos
 		{
 			if( !pCust->nUserData1 )
 			{
-				const char *decalname = va( "player%dlogo%d", playernum, customIndex );
+				char decalname[MAX_VA_STRING];
+				int width, height;
+
+				Q_snprintf( decalname, sizeof( decalname ), "player%dlogo%d", playernum, customIndex );
+				textureIndex = ref.dllFuncs.GL_FindTexture( decalname );
+				if( textureIndex != 0 )
+					ref.dllFuncs.GL_FreeTexture( textureIndex );
+
 				pCust->nUserData1 = GL_LoadTextureInternal( decalname, pCust->pInfo, TF_DECAL );
+
+				width = REF_GET_PARM( PARM_TEX_WIDTH, pCust->nUserData1 );
+				height = REF_GET_PARM( PARM_TEX_HEIGHT, pCust->nUserData1 );
+
+				if( width > cl_logomaxdim.value || height > cl_logomaxdim.value )
+				{
+					double scale = cl_logomaxdim.value / Q_max( width, height );
+					width = round( width * scale );
+					height = round( height * scale );
+					ref.dllFuncs.R_OverrideTextureSourceSize( pCust->nUserData1, width, height ); // default custom decal from HL1
+				}
 			}
 			textureIndex = pCust->nUserData1;
 		}
@@ -2971,8 +2991,47 @@ int GAME_EXPORT CL_DecalIndex( int id )
 
 	if( cl.decal_index[id] == 0 )
 	{
+		int gl_texturenum = 0;
+
 		Image_SetForceFlags( IL_LOAD_DECAL );
-		cl.decal_index[id] = ref.dllFuncs.GL_LoadTexture( host.draw_decals[id], NULL, 0, TF_DECAL );
+
+		if( Mod_AllowMaterials( ))
+		{
+			string decalname;
+
+			if( Q_snprintf( decalname, sizeof( decalname ), "materials/decals/%s.tga", host.draw_decals[id] ) > 0 )
+			{
+				if( g_fsapi.FileExists( decalname, false ))
+				{
+					gl_texturenum = ref.dllFuncs.GL_LoadTexture( decalname, NULL, 0, TF_DECAL );
+					if( host_allow_materials.value == 2.0f )
+						Con_Printf( "Looking for %s decal replacement...%s (%s)\n", host.draw_decals[id], gl_texturenum != 0 ? S_GREEN "OK" : S_RED "FAIL", decalname );
+				}
+				else if( host_allow_materials.value == 2.0f )
+					Con_Printf( "Looking for %s decal replacement..." S_YELLOW "MISS (%s)\n", host.draw_decals[id], decalname );
+			}
+			else if( host_allow_materials.value == 2.0f )
+				Con_Printf( "Looking for %s decal replacement..." S_YELLOW "MISS (overflow)\n", host.draw_decals[id] );
+
+			if( gl_texturenum )
+			{
+				byte *fin;
+
+				Q_snprintf( decalname, sizeof( decalname ), "decals.wad/%s", host.draw_decals[id] );
+
+				if(( fin = g_fsapi.LoadFile( decalname, NULL, false )) != NULL )
+				{
+					mip_t *mip = (mip_t *)fin;
+					ref.dllFuncs.R_OverrideTextureSourceSize( gl_texturenum, mip->width, mip->height );
+					Mem_Free( fin );
+				}
+			}
+		}
+
+		if( !gl_texturenum )
+			gl_texturenum = ref.dllFuncs.GL_LoadTexture( host.draw_decals[id], NULL, 0, TF_DECAL );
+
+		cl.decal_index[id] = gl_texturenum;
 		Image_ClearForceFlags();
 	}
 

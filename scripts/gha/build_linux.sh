@@ -16,7 +16,10 @@ build_sdl2()
 	if [ "$ARCH" = "i386" ]; then
 		export CFLAGS="-msse2 -march=i686 -m32 -ggdb -O2"
 		export LDFLAGS="-m32"
+		export PKG_CONFIG_PATH="/usr/lib/i386-linux-gnu/pkgconfig"
 	fi
+
+	# TODO: enable pipewire after we migrate from 20.04
 	./configure \
 		--disable-render \
 		--disable-haptic \
@@ -29,6 +32,7 @@ build_sdl2()
 		--disable-ime \
 		--disable-fcitx \
 		--enable-alsa-shared \
+		--enable-jack-shared \
 		--enable-pulseaudio-shared \
 		--enable-wayland-shared \
 		--enable-x11-shared \
@@ -50,14 +54,14 @@ build_engine()
 	fi
 
 	if [ "$1" = "dedicated" ]; then
-		./waf configure -T release -d $AMD64 || die
+		./waf configure -T release -d $AMD64 --enable-tests --enable-lto || die_configure
 	elif [ "$1" = "full" ]; then
-		./waf configure --sdl2=SDL2_linux -T release --enable-stb $AMD64 --enable-utils || die
+		./waf configure --sdl2=SDL2_linux -T release --enable-stb $AMD64 --enable-utils --enable-tests --enable-lto || die_configure
 	else
 		die
 	fi
 
-	./waf build || die
+	./waf build || die_configure
 }
 
 build_appimage()
@@ -66,12 +70,9 @@ build_appimage()
 
 	./waf install --destdir="$APPDIR" || die
 
-	# Generate extras.pak
-	python3 scripts/makepak.py xash-extras/ "$APPDIR/extras.pak"
-
 	cp SDL2_linux/lib/libSDL2-2.0.so.0 "$APPDIR/"
 	if [ "$ARCH" = "i386" ]; then
-		cp vgui_support/vgui-dev/lib/vgui.so "$APPDIR/"
+		cp 3rdparty/vgui_support/vgui-dev/lib/vgui.so "$APPDIR/"
 	fi
 
 	cat > "$APPDIR"/AppRun << 'EOF'
@@ -83,7 +84,7 @@ fi
 echo "Xash3D FWGS installed as AppImage."
 echo "Base directory is $XASH3D_BASEDIR. Set XASH3D_BASEDIR environment variable to override this"
 
-export XASH3D_EXTRAS_PAK1="${APPDIR}"/extras.pak
+export XASH3D_EXTRAS_PAK1="${APPDIR}"/valve/extras.pk3
 ${DEBUGGER} "${APPDIR}"/xash3d "$@"
 exit $?
 EOF

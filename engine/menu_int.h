@@ -19,6 +19,7 @@ GNU General Public License for more details.
 #include "cvardef.h"
 #include "gameinfo.h"
 #include "wrect.h"
+#include "net_api.h"
 
 // a macro for mainui_cpp, indicating that mainui should be compiled for
 // Xash3D 1.0 interface
@@ -143,7 +144,7 @@ typedef struct ui_enginefuncs_s
 	void	*(*pfnKeyGetState)( const char *name );			// for mlook, klook etc
 
 	// engine memory manager
-	void*	(*pfnMemAlloc)( size_t cb, const char *filename, const int fileline );
+	void*	(*pfnMemAlloc)( size_t cb, const char *filename, const int fileline ) ALLOC_CHECK( 1 );
 	void	(*pfnMemFree)( void *mem, const char *filename, const int fileline );
 
 	// collect info from engine
@@ -209,12 +210,14 @@ typedef struct ui_extendedfuncs_s {
 	// new engine extended api start here
 	// returns 1 if there are more in list, otherwise 0
 	int (*pfnGetRenderers)( unsigned int num, char *shortName, size_t size1, char *readableName, size_t size2 );
-
 	double (*pfnDoubleTime)( void );
-
 	char *(*pfnParseFile)( char *data, char *buf, const int size, unsigned int flags, int *len );
 
-	const char	*(*pfnAdrToString)( const struct netadr_s a );
+	// network address funcs
+	const char *(*pfnAdrToString)( const struct netadr_s a );
+	int (*pfnCompareAdr)( const void *a, const void *b ); // netadr_t
+	void *(*pfnGetNativeObject)( const char *name );
+	struct net_api_s *pNetAPI;
 } ui_extendedfuncs_t;
 
 // deprecated export from old engine

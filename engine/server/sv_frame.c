@@ -180,7 +180,7 @@ SV_FindBestBaseline
 trying to deltas with previous entities
 =============
 */
-int SV_FindBestBaseline( sv_client_t *cl, int index, entity_state_t **baseline, entity_state_t *to, client_frame_t *frame, qboolean player )
+static int SV_FindBestBaseline( sv_client_t *cl, int index, entity_state_t **baseline, entity_state_t *to, client_frame_t *frame, qboolean player )
 {
 	int	bestBitCount;
 	int	i, bitCount;
@@ -515,7 +515,7 @@ SV_EmitPings
 
 =============
 */
-void SV_EmitPings( sizebuf_t *msg )
+static void SV_EmitPings( sizebuf_t *msg )
 {
 	sv_client_t	*cl;
 	int		packet_loss;
@@ -547,7 +547,7 @@ SV_WriteClientdataToMessage
 
 ==================
 */
-void SV_WriteClientdataToMessage( sv_client_t *cl, sizebuf_t *msg )
+static void SV_WriteClientdataToMessage( sv_client_t *cl, sizebuf_t *msg )
 {
 	clientdata_t	nullcd;
 	clientdata_t	*from_cd, *to_cd;
@@ -634,7 +634,7 @@ SV_WriteEntitiesToClient
 
 ==================
 */
-void SV_WriteEntitiesToClient( sv_client_t *cl, sizebuf_t *msg )
+static void SV_WriteEntitiesToClient( sv_client_t *cl, sizebuf_t *msg )
 {
 	client_frame_t	*frame;
 	entity_state_t	*state;
@@ -706,11 +706,12 @@ FRAME UPDATES
 SV_SendClientDatagram
 =======================
 */
-void SV_SendClientDatagram( sv_client_t *cl )
+static void SV_SendClientDatagram( sv_client_t *cl )
 {
 	byte	msg_buf[MAX_DATAGRAM];
 	sizebuf_t	msg;
 
+	memset( msg_buf, 0, sizeof( msg_buf ));
 	MSG_Init( &msg, "Datagram", msg_buf, sizeof( msg_buf ));
 
 	// always send servertime at new frame
@@ -751,7 +752,7 @@ void SV_SendClientDatagram( sv_client_t *cl )
 SV_UpdateUserInfo
 =======================
 */
-void SV_UpdateUserInfo( sv_client_t *cl )
+static void SV_UpdateUserInfo( sv_client_t *cl )
 {
 	SV_FullClientUpdate( cl, &sv.reliable_datagram );
 	ClearBits( cl->flags, FCL_RESEND_USERINFO );
@@ -763,7 +764,7 @@ void SV_UpdateUserInfo( sv_client_t *cl )
 SV_UpdateToReliableMessages
 =======================
 */
-void SV_UpdateToReliableMessages( void )
+static void SV_UpdateToReliableMessages( void )
 {
 	sv_client_t	*cl;
 	int		i;
@@ -810,17 +811,17 @@ void SV_UpdateToReliableMessages( void )
 			continue;	// reliables go to all connected or spawned
 
 		if( MSG_GetNumBytesWritten( &sv.reliable_datagram ) < MSG_GetNumBytesLeft( &cl->netchan.message ))
-			MSG_WriteBits( &cl->netchan.message, MSG_GetBuf( &sv.reliable_datagram ), MSG_GetNumBitsWritten( &sv.reliable_datagram ));
+			MSG_WriteBits( &cl->netchan.message, MSG_GetData( &sv.reliable_datagram ), MSG_GetNumBitsWritten( &sv.reliable_datagram ));
 		else Netchan_CreateFragments( &cl->netchan, &sv.reliable_datagram );
 
 		if( MSG_GetNumBytesWritten( &sv.datagram ) < MSG_GetNumBytesLeft( &cl->datagram ))
-			MSG_WriteBits( &cl->datagram, MSG_GetBuf( &sv.datagram ), MSG_GetNumBitsWritten( &sv.datagram ));
+			MSG_WriteBits( &cl->datagram, MSG_GetData( &sv.datagram ), MSG_GetNumBitsWritten( &sv.datagram ));
 		else Con_DPrintf( S_WARN "Ignoring unreliable datagram for %s, would overflow\n", cl->name );
 
 		if( FBitSet( cl->flags, FCL_HLTV_PROXY ))
 		{
 			if( MSG_GetNumBytesWritten( &sv.spec_datagram ) < MSG_GetNumBytesLeft( &cl->datagram ))
-				MSG_WriteBits( &cl->datagram, MSG_GetBuf( &sv.spec_datagram ), MSG_GetNumBitsWritten( &sv.spec_datagram ));
+				MSG_WriteBits( &cl->datagram, MSG_GetData( &sv.spec_datagram ), MSG_GetNumBitsWritten( &sv.spec_datagram ));
 			else Con_DPrintf( S_WARN "Ignoring spectator datagram for %s, would overflow\n", cl->name );
 		}
 	}
@@ -862,7 +863,7 @@ void SV_SendClientMessages( void )
 			continue;
 		}
 
-		if( !host_limitlocal->value && NET_IsLocalAddress( cl->netchan.remote_address ))
+		if( !host_limitlocal.value && NET_IsLocalAddress( cl->netchan.remote_address ))
 			SetBits( cl->flags, FCL_SEND_NET_MESSAGE );
 
 		if( cl->state == cs_spawned )
@@ -924,30 +925,6 @@ void SV_SendClientMessages( void )
 
 	// reset current client
 	sv.current_client = NULL;
-}
-
-/*
-=======================
-SV_SendMessagesToAll
-
-e.g. before changing level
-=======================
-*/
-void SV_SendMessagesToAll( void )
-{
-	sv_client_t	*cl;
-	int		i;
-
-	if( sv.state == ss_dead )
-		return;
-
-	for( i = 0, cl = svs.clients; i < svs.maxclients; i++, cl++ )
-	{
-		if( cl->state >= cs_connected )
-			SetBits( cl->flags, FCL_SEND_NET_MESSAGE );
-	}
-
-	SV_SendClientMessages();
 }
 
 /*

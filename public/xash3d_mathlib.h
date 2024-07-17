@@ -22,11 +22,10 @@ GNU General Public License for more details.
 #endif
 
 #include "build.h"
+#include "xash3d_types.h"
+#include "const.h"
 #include "com_model.h"
-
-#ifdef XASH_MSVC
-#pragma warning(disable : 4201)	// nonstandard extension used
-#endif
+#include "studio.h"
 
 // euler angle order
 #define PITCH		0
@@ -74,13 +73,17 @@ GNU General Public License for more details.
 
 #define Q_min( a, b )	(((a) < (b)) ? (a) : (b))
 #define Q_max( a, b )	(((a) > (b)) ? (a) : (b))
-#define Q_equal( a, b ) (((a) > ((b) - EQUAL_EPSILON)) && ((a) < ((b) + EQUAL_EPSILON)))
+#define Q_equal_e( a, b, e ) (((a) >= ((b) - (e))) && ((a) <= ((b) + (e))))
+#define Q_equal( a, b ) Q_equal_e( a, b, EQUAL_EPSILON )
 #define Q_recip( a )	((float)(1.0f / (float)(a)))
 #define Q_floor( a )	((float)(int)(a))
 #define Q_ceil( a )		((float)(int)((a) + 1))
 #define Q_round( x, y )	(floor( x / y + 0.5f ) * y )
 #define Q_rint(x)		((x) < 0.0f ? ((int)((x)-0.5f)) : ((int)((x)+0.5f)))
 
+#ifdef XASH_IRIX
+#undef isnan
+#endif
 #ifdef isnan // check for C99 isnan
 #define IS_NAN isnan
 #else
@@ -135,29 +138,90 @@ GNU General Public License for more details.
 #define PlaneDiff(point,plane) (((plane)->type < 3 ? (point)[(plane)->type] : DotProduct((point), (plane)->normal)) - (plane)->dist)
 #define bound( min, num, max ) ((num) >= (min) ? ((num) < (max) ? (num) : (max)) : (min))
 
+// horrible cast but helps not breaking strict aliasing in mathlib
+// as union type punning should be fine in C but not in C++
+// so don't carry over this to C++ code
+typedef union
+{
+	float fl;
+	uint32_t u;
+	int32_t i;
+} float_bits_t;
+
+static inline uint32_t FloatAsUint( float v )
+{
+	float_bits_t bits = { v };
+	return bits.u;
+}
+
+static inline int32_t FloatAsInt( float v )
+{
+	float_bits_t bits = { v };
+	return bits.i;
+}
+
+static inline float IntAsFloat( int32_t i )
+{
+	float_bits_t bits;
+	bits.i = i;
+	return bits.fl;
+}
+
+static inline float UintAsFloat( uint32_t u )
+{
+	float_bits_t bits;
+	bits.u = u;
+	return bits.fl;
+}
+
+static inline void SinCos( float radians, float *sine, float *cosine )
+{
+	*sine = sin(radians);
+	*cosine = cos(radians);
+}
+
 float rsqrt( float number );
 float anglemod( float a );
 word FloatToHalf( float v );
 float HalfToFloat( word h );
-float SimpleSpline( float value );
 void RoundUpHullSize( vec3_t size );
 int SignbitsForPlane( const vec3_t normal );
 int PlaneTypeForNormal( const vec3_t normal );
 int NearestPOW( int value, qboolean roundDown );
-void SinCos( float radians, float *sine, float *cosine );
 float VectorNormalizeLength2( const vec3_t v, vec3_t out );
 qboolean VectorCompareEpsilon( const vec3_t vec1, const vec3_t vec2, vec_t epsilon );
 void VectorVectors( const vec3_t forward, vec3_t right, vec3_t up );
 void VectorAngles( const float *forward, float *angles );
 void AngleVectors( const vec3_t angles, vec3_t forward, vec3_t right, vec3_t up );
 void VectorsAngles( const vec3_t forward, const vec3_t right, const vec3_t up, vec3_t angles );
-qboolean PlanesGetIntersectionPoint( const struct mplane_s *plane1, const struct mplane_s *plane2, const struct mplane_s *plane3, vec3_t out );
 void PlaneIntersect( const struct mplane_s *plane, const vec3_t p0, const vec3_t p1, vec3_t out );
 
-void ClearBounds( vec3_t mins, vec3_t maxs );
+static inline void ClearBounds( vec3_t mins, vec3_t maxs )
+{
+	// make bogus range
+	mins[0] = mins[1] = mins[2] =  999999.0f;
+	maxs[0] = maxs[1] = maxs[2] = -999999.0f;
+}
+
+static inline qboolean BoundsIntersect( const vec3_t mins1, const vec3_t maxs1, const vec3_t mins2, const vec3_t maxs2 )
+{
+	if( mins1[0] > maxs2[0] || mins1[1] > maxs2[1] || mins1[2] > maxs2[2] )
+		return false;
+	if( maxs1[0] < mins2[0] || maxs1[1] < mins2[1] || maxs1[2] < mins2[2] )
+		return false;
+	return true;
+}
+
+static inline qboolean BoundsAndSphereIntersect( const vec3_t mins, const vec3_t maxs, const vec3_t origin, float radius )
+{
+	if( mins[0] > origin[0] + radius || mins[1] > origin[1] + radius || mins[2] > origin[2] + radius )
+		return false;
+	if( maxs[0] < origin[0] - radius || maxs[1] < origin[1] - radius || maxs[2] < origin[2] - radius )
+		return false;
+	return true;
+}
+
 void AddPointToBounds( const vec3_t v, vec3_t mins, vec3_t maxs );
-qboolean BoundsIntersect( const vec3_t mins1, const vec3_t maxs1, const vec3_t mins2, const vec3_t maxs2 );
-qboolean BoundsAndSphereIntersect( const vec3_t mins, const vec3_t maxs, const vec3_t origin, float radius );
 qboolean SphereIntersect( const vec3_t vSphereCenter, float fSphereRadiusSquared, const vec3_t vLinePt, const vec3_t vLineDir );
 float RadiusFromBounds( const vec3_t mins, const vec3_t maxs );
 void ExpandBounds( vec3_t mins, vec3_t maxs, float offset );
@@ -165,14 +229,26 @@ void ExpandBounds( vec3_t mins, vec3_t maxs, float offset );
 void AngleQuaternion( const vec3_t angles, vec4_t q, qboolean studio );
 void QuaternionAngle( const vec4_t q, vec3_t angles );
 void QuaternionSlerp( const vec4_t p, const vec4_t q, float t, vec4_t qt );
-float RemapVal( float val, float A, float B, float C, float D );
-float ApproachVal( float target, float value, float speed );
 
 //
 // matrixlib.c
 //
-#define Matrix3x4_LoadIdentity( mat )		Matrix3x4_Copy( mat, matrix3x4_identity )
+#define Matrix3x4_LoadIdentity( mat )		Matrix3x4_Copy( mat, m_matrix3x4_identity )
 #define Matrix3x4_Copy( out, in )		memcpy( out, in, sizeof( matrix3x4 ))
+
+static inline void Matrix3x4_SetOrigin( matrix3x4 out, float x, float y, float z )
+{
+	out[0][3] = x;
+	out[1][3] = y;
+	out[2][3] = z;
+}
+
+static inline void Matrix3x4_OriginFromMatrix( const matrix3x4 in, float *out )
+{
+	out[0] = in[0][3];
+	out[1] = in[1][3];
+	out[2] = in[2][3];
+}
 
 void Matrix3x4_VectorTransform( const matrix3x4 in, const float v[3], float out[3] );
 void Matrix3x4_VectorITransform( const matrix3x4 in, const float v[3], float out[3] );
@@ -181,15 +257,10 @@ void Matrix3x4_VectorIRotate( const matrix3x4 in, const float v[3], float out[3]
 void Matrix3x4_ConcatTransforms( matrix3x4 out, const matrix3x4 in1, const matrix3x4 in2 );
 void Matrix3x4_FromOriginQuat( matrix3x4 out, const vec4_t quaternion, const vec3_t origin );
 void Matrix3x4_CreateFromEntity( matrix3x4 out, const vec3_t angles, const vec3_t origin, float scale );
-void Matrix3x4_TransformPositivePlane( const matrix3x4 in, const vec3_t normal, float d, vec3_t out, float *dist );
 void Matrix3x4_TransformAABB( const matrix3x4 world, const vec3_t mins, const vec3_t maxs, vec3_t absmin, vec3_t absmax );
-void Matrix3x4_SetOrigin( matrix3x4 out, float x, float y, float z );
-void Matrix3x4_Invert_Simple( matrix3x4 out, const matrix3x4 in1 );
-void Matrix3x4_OriginFromMatrix( const matrix3x4 in, float *out );
 void Matrix3x4_AnglesFromMatrix( const matrix3x4 in, vec3_t out );
-void Matrix3x4_Transpose( matrix3x4 out, const matrix3x4 in1 );
 
-#define Matrix4x4_LoadIdentity( mat )	Matrix4x4_Copy( mat, matrix4x4_identity )
+#define Matrix4x4_LoadIdentity( mat )	Matrix4x4_Copy( mat, m_matrix4x4_identity )
 #define Matrix4x4_Copy( out, in )	memcpy( out, in, sizeof( matrix4x4 ))
 
 void Matrix4x4_VectorTransform( const matrix4x4 in, const float v[3], float out[3] );
@@ -197,19 +268,15 @@ void Matrix4x4_VectorITransform( const matrix4x4 in, const float v[3], float out
 void Matrix4x4_VectorRotate( const matrix4x4 in, const float v[3], float out[3] );
 void Matrix4x4_VectorIRotate( const matrix4x4 in, const float v[3], float out[3] );
 void Matrix4x4_ConcatTransforms( matrix4x4 out, const matrix4x4 in1, const matrix4x4 in2 );
-void Matrix4x4_FromOriginQuat( matrix4x4 out, const vec4_t quaternion, const vec3_t origin );
 void Matrix4x4_CreateFromEntity( matrix4x4 out, const vec3_t angles, const vec3_t origin, float scale );
 void Matrix4x4_TransformPositivePlane( const matrix4x4 in, const vec3_t normal, float d, vec3_t out, float *dist );
-void Matrix4x4_TransformStandardPlane( const matrix4x4 in, const vec3_t normal, float d, vec3_t out, float *dist );
 void Matrix4x4_ConvertToEntity( const matrix4x4 in, vec3_t angles, vec3_t origin );
-void Matrix4x4_SetOrigin( matrix4x4 out, float x, float y, float z );
 void Matrix4x4_Invert_Simple( matrix4x4 out, const matrix4x4 in1 );
-void Matrix4x4_OriginFromMatrix( const matrix4x4 in, float *out );
-void Matrix4x4_Transpose( matrix4x4 out, const matrix4x4 in1 );
 qboolean Matrix4x4_Invert_Full( matrix4x4 out, const matrix4x4 in1 );
 
-float V_CalcFov( float *fov_x, float width, float height );
-void V_AdjustFov( float *fov_x, float *fov_y, float width, float height, qboolean lock_x );
+void R_StudioSlerpBones( int numbones, vec4_t q1[], float pos1[][3], const vec4_t q2[], const float pos2[][3], float s );
+void R_StudioCalcBoneQuaternion( int frame, float s, const mstudiobone_t *pbone, const mstudioanim_t *panim, const float *adj, vec4_t q );
+void R_StudioCalcBonePosition( int frame, float s, const mstudiobone_t *pbone, const mstudioanim_t *panim, const vec3_t adj, vec3_t pos );
 
 int BoxOnPlaneSide( const vec3_t emins, const vec3_t emaxs, const mplane_t *p );
 #define BOX_ON_PLANE_SIDE( emins, emaxs, p )			\
@@ -230,8 +297,8 @@ int BoxOnPlaneSide( const vec3_t emins, const vec3_t emaxs, const mplane_t *p );
 
 extern vec3_t		vec3_origin;
 extern int		boxpnt[6][4];
-extern const matrix3x4	matrix3x4_identity;
-extern const matrix4x4	matrix4x4_identity;
+extern const matrix3x4	m_matrix3x4_identity;
+extern const matrix4x4	m_matrix4x4_identity;
 extern const float		m_bytenormals[NUMVERTEXNORMALS][3];
 
 #endif // XASH3D_MATHLIB_H

@@ -25,70 +25,6 @@ GNU General Public License for more details.
 #define MSG_COUNT		32		// last 32 messages parsed
 #define MSG_MASK		(MSG_COUNT - 1)
 
-const char *svc_strings[svc_lastmsg+1] =
-{
-	"svc_bad",
-	"svc_nop",
-	"svc_disconnect",
-	"svc_event",
-	"svc_changing",
-	"svc_setview",
-	"svc_sound",
-	"svc_time",
-	"svc_print",
-	"svc_stufftext",
-	"svc_setangle",
-	"svc_serverdata",
-	"svc_lightstyle",
-	"svc_updateuserinfo",
-	"svc_deltatable",
-	"svc_clientdata",
-	"svc_resource",
-	"svc_pings",
-	"svc_particle",
-	"svc_restoresound",
-	"svc_spawnstatic",
-	"svc_event_reliable",
-	"svc_spawnbaseline",
-	"svc_temp_entity",
-	"svc_setpause",
-	"svc_signonnum",
-	"svc_centerprint",
-	"svc_unused27",
-	"svc_unused28",
-	"svc_unused29",
-	"svc_intermission",
-	"svc_finale",
-	"svc_cdtrack",
-	"svc_restore",
-	"svc_cutscene",
-	"svc_weaponanim",
-	"svc_bspdecal",
-	"svc_roomtype",
-	"svc_addangle",
-	"svc_usermessage",
-	"svc_packetentities",
-	"svc_deltapacketentities",
-	"svc_choke",
-	"svc_resourcelist",
-	"svc_deltamovevars",
-	"svc_resourcerequest",
-	"svc_customization",
-	"svc_crosshairangle",
-	"svc_soundfade",
-	"svc_filetxferfailed",
-	"svc_hltv",
-	"svc_director",
-	"svc_voiceinit",
-	"svc_voicedata",
-	"svc_deltapacketbones",
-	"svc_unused55",
-	"svc_resourcelocation",
-	"svc_querycvarvalue",
-	"svc_querycvarvalue2",
-	"svc_exec",
-};
-
 typedef struct
 {
 	int	command;
@@ -109,12 +45,34 @@ const char *CL_MsgInfo( int cmd )
 {
 	static string	sz;
 
-	Q_strcpy( sz, "???" );
+	Q_strncpy( sz, "???", sizeof( sz ));
 
 	if( cmd >= 0 && cmd <= svc_lastmsg )
 	{
 		// get engine message name
-		Q_strncpy( sz, svc_strings[cmd], sizeof( sz ));
+		const char *svc_string = NULL;
+
+		switch( cls.legacymode )
+		{
+		case PROTO_CURRENT:
+			svc_string = svc_strings[cmd];
+			break;
+		case PROTO_LEGACY:
+			svc_string = svc_legacy_strings[cmd];
+			break;
+		case PROTO_QUAKE:
+			svc_string = svc_quake_strings[cmd];
+			break;
+		case PROTO_GOLDSRC:
+			svc_string = svc_goldsrc_strings[cmd];
+			break;
+		}
+
+		// fall back to current protocol strings
+		if( !svc_string )
+			svc_string = svc_strings[cmd];
+
+		Q_strncpy( sz, svc_string, sizeof( sz ));
 	}
 	else if( cmd > svc_lastmsg && cmd <= ( svc_lastmsg + MAX_USER_MESSAGES ))
 	{

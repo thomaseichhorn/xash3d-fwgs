@@ -40,7 +40,7 @@ CL_CalcPlayerVelocity
 compute velocity for a given client
 =============
 */
-void CL_CalcPlayerVelocity( int idx, vec3_t velocity )
+static void CL_CalcPlayerVelocity( int idx, vec3_t velocity )
 {
 	clientdata_t	*pcd;
 	vec3_t		delta;
@@ -78,13 +78,13 @@ CL_DescribeEvent
 
 =============
 */
-void CL_DescribeEvent( event_info_t *ei, int slot )
+static void CL_DescribeEvent( event_info_t *ei, int slot )
 {
 	int		idx = (slot & 63) * 2;
 	con_nprint_t	info;
 	string origin_str = { 0 }; //, angles_str = { 0 };
 
-	if( !cl_showevents->value )
+	if( !cl_showevents.value )
 		return;
 
 	info.time_to_live = 1.0f;
@@ -192,7 +192,7 @@ void CL_RegisterEvent( int lastnum, const char *szEvName, pfnEventHook func )
 	ev = clgame.events[lastnum];
 
 	// NOTE: ev->index will be set later
-	Q_strncpy( ev->name, szEvName, MAX_QPATH );
+	Q_strncpy( ev->name, szEvName, sizeof( ev->name ));
 	ev->func = func;
 }
 
@@ -202,7 +202,7 @@ CL_FireEvent
 
 =============
 */
-qboolean CL_FireEvent( event_info_t *ei, int slot )
+static qboolean CL_FireEvent( event_info_t *ei, int slot )
 {
 	cl_user_event_t	*ev;
 	const char	*name;
@@ -219,12 +219,24 @@ qboolean CL_FireEvent( event_info_t *ei, int slot )
 		if( !ev )
 		{
 			idx = bound( 1, ei->index, ( MAX_EVENTS - 1 ));
-			Con_Reportf( S_ERROR "CL_FireEvent: %s not precached\n", cl.event_precache[idx] );
+			Con_Reportf( S_ERROR "%s: %s not precached\n", __func__, cl.event_precache[idx] );
 			break;
 		}
 
 		if( ev->index == ei->index )
 		{
+			name = cl.event_precache[ei->index];
+
+			if( cl_trace_events.value )
+			{
+				Con_Printf( "^3EVENT %s AT %.2f %.2f %.2f\n"    // event name
+					"\t%.2f %.2f %i %i %s %s\n", // bool params
+					name, ei->args.origin[0], ei->args.origin[1], ei->args.origin[2],
+					ei->args.fparam1, ei->args.fparam2,
+					ei->args.iparam1, ei->args.iparam2,
+					ei->args.bparam1 ? "TRUE" : "FALSE", ei->args.bparam2 ? "TRUE" : "FALSE" );
+			}
+
 			if( ev->func )
 			{
 				CL_DescribeEvent( ei, slot );
@@ -232,8 +244,7 @@ qboolean CL_FireEvent( event_info_t *ei, int slot )
 				return true;
 			}
 
-			name = cl.event_precache[ei->index];
-			Con_Reportf( S_ERROR "CL_FireEvent: %s not hooked\n", name );
+			Con_Reportf( S_ERROR "%s: %s not hooked\n", __func__, name );
 			break;
 		}
 	}
@@ -281,7 +292,7 @@ CL_FindEvent
 find first empty event
 =============
 */
-event_info_t *CL_FindEmptyEvent( void )
+static event_info_t *CL_FindEmptyEvent( void )
 {
 	int		i;
 	event_state_t	*es;
@@ -309,7 +320,7 @@ CL_FindEvent
 replace only unreliable events
 =============
 */
-event_info_t *CL_FindUnreliableEvent( void )
+static event_info_t *CL_FindUnreliableEvent( void )
 {
 	event_state_t	*es;
 	event_info_t	*ei;
@@ -339,7 +350,7 @@ CL_QueueEvent
 
 =============
 */
-void CL_QueueEvent( int flags, int index, float delay, event_args_t *args )
+static void CL_QueueEvent( int flags, int index, float delay, event_args_t *args )
 {
 	event_info_t	*ei;
 
@@ -486,14 +497,14 @@ void GAME_EXPORT CL_PlaybackEvent( int flags, const edict_t *pInvoker, word even
 	// first check event for out of bounds
 	if( eventindex < 1 || eventindex >= MAX_EVENTS )
 	{
-		Con_DPrintf( S_ERROR "CL_PlaybackEvent: invalid eventindex %i\n", eventindex );
+		Con_DPrintf( S_ERROR "%s: invalid eventindex %i\n", __func__, eventindex );
 		return;
 	}
 
 	// check event for precached
 	if( !CL_EventIndex( cl.event_precache[eventindex] ))
 	{
-		Con_DPrintf( S_ERROR "CL_PlaybackEvent: event %i was not precached\n", eventindex );
+		Con_DPrintf( S_ERROR "%s: event %i was not precached\n", __func__, eventindex );
 		return;
 	}
 

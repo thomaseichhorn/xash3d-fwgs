@@ -74,7 +74,7 @@ static void free_winding( winding_t *w )
 {
 	// simple sentinel by Carmack
 	if( *(unsigned *)w == 0xDEADC0DE )
-		Host_Error( "free_winding: freed a freed winding\n" );
+		Host_Error( "%s: freed a freed winding\n", __func__ );
 	*(unsigned *)w = 0xDEADC0DE;
 	free( w );
 }
@@ -154,7 +154,7 @@ static winding_t *winding_for_plane( const mplane_t *p )
 		vup[0] = 1;
 		break;
 	default:
-		Host_Error( "BaseWindingForPlane: no axis found\n" );
+		Host_Error( "%s: no axis found\n", __func__ );
 		return NULL;
 	}
 
@@ -659,7 +659,7 @@ static void make_hull_windings( hull_t *hull, hull_model_t *model )
 	Con_Reportf( "%i hull polys\n", model->num_polys );
 }
 
-void Mod_InitDebugHulls( void )
+void Mod_InitDebugHulls( model_t *loadmodel )
 {
 	int	i;
 
@@ -684,6 +684,9 @@ void Mod_CreatePolygonsForHull( int hullnum )
 
 	if( hullnum < 1 || hullnum > 3 )
 		return;
+
+	if( !world.num_hull_models )
+		Mod_InitDebugHulls( mod ); // FIXME: build hulls for separate bmodels (shells, medkits etc)
 
 	Con_Printf( "generating polygons for hull %u...\n", hullnum );
 	start = Sys_DoubleTime();

@@ -22,13 +22,16 @@ GNU General Public License for more details.
 #endif
 #include <string.h>
 #include <errno.h>
+#if XASH_IRIX
+#include <sys/time.h>
+#endif
 
 // do not waste precious CPU cycles on mobiles or low memory devices
 #if !XASH_WIN32 && !XASH_MOBILE_PLATFORM && !XASH_LOW_MEMORY
 #define XASH_COLORIZE_CONSOLE true
 // use with caution, running engine in Qt Creator may cause a freeze in read() call
-// I was never encountered this bug anywhere else, so still enable by default
-// #define XASH_USE_SELECT 1
+// I have never encountered this bug anywhere else, so still enable by default
+#define XASH_USE_SELECT 1
 #else
 #define XASH_COLORIZE_CONSOLE false
 #endif
@@ -51,6 +54,7 @@ static LogData s_ld;
 char *Sys_Input( void )
 {
 #if XASH_USE_SELECT
+	if( Host_IsDedicated( ))
 	{
 		fd_set rfds;
 		static char line[1024];
@@ -85,7 +89,7 @@ char *Sys_Input( void )
 void Sys_DestroyConsole( void )
 {
 	// last text message into console or log
-	Con_Reportf( "Sys_DestroyConsole: Exiting!\n" );
+	Con_Reportf( "%s: Exiting!\n", __func__ );
 #if XASH_WIN32
 	Wcon_DestroyConsole();
 #endif
@@ -131,6 +135,10 @@ void Sys_InitLog( void )
 		mode = "a";
 	else mode = "w";
 
+	if( Host_IsDedicated( ))
+		Q_strncpy( s_ld.title, XASH_DEDICATED_SERVER_NAME " " XASH_VERSION, sizeof( s_ld.title ));
+	else Q_strncpy( s_ld.title, XASH_ENGINE_NAME " " XASH_VERSION, sizeof( s_ld.title ));
+
 	// create log if needed
 	if( s_ld.log_active )
 	{
@@ -138,15 +146,18 @@ void Sys_InitLog( void )
 
 		if ( !s_ld.logfile )
 		{
-			Con_Reportf( S_ERROR  "Sys_InitLog: can't create log file %s: %s\n", s_ld.log_path, strerror( errno ) );
+			Con_Reportf( S_ERROR  "Sys_InitLog: can't create log file %s: %s\n", s_ld.log_path, strerror( errno ));
 			return;
 		}
 
 		s_ld.logfileno = fileno( s_ld.logfile );
 
-		fprintf( s_ld.logfile, "=================================================================================\n" );
-		fprintf( s_ld.logfile, "\t%s (build %i) started at %s\n", s_ld.title, Q_buildnum(), Q_timestamp( TIME_FULL ) );
-		fprintf( s_ld.logfile, "=================================================================================\n" );
+		// fit to 80 columns for easier read on standard terminal
+		fputs( "================================================================================\n", s_ld.logfile );
+		fprintf( s_ld.logfile, "%s (%i, %s, %s, %s-%s)\n", s_ld.title, Q_buildnum(), Q_buildcommit(), Q_buildbranch(), Q_buildos(), Q_buildarch());
+		fprintf( s_ld.logfile, "Game started at %s\n", Q_timestamp( TIME_FULL ));
+		fputs( "================================================================================\n", s_ld.logfile );
+		fflush( s_ld.logfile );
 	}
 }
 
@@ -173,12 +184,11 @@ void Sys_CloseLog( void )
 
 	if( s_ld.logfile )
 	{
-		fprintf( s_ld.logfile, "\n");
-		fprintf( s_ld.logfile, "=================================================================================");
-		if( host.change_game ) fprintf( s_ld.logfile, "\n\t%s (build %i) %s\n", s_ld.title, Q_buildnum(), event_name );
-		else fprintf( s_ld.logfile, "\n\t%s (build %i) %s at %s\n", s_ld.title, Q_buildnum(), event_name, Q_timestamp( TIME_FULL ));
-		fprintf( s_ld.logfile, "=================================================================================\n");
-
+		fputc( '\n', s_ld.logfile );
+		fputs( "================================================================================\n", s_ld.logfile );
+		fprintf( s_ld.logfile, "%s (%i, %s, %s, %s-%s)\n", s_ld.title, Q_buildnum(), Q_buildcommit(), Q_buildbranch(), Q_buildos(), Q_buildarch());
+		fprintf( s_ld.logfile, "Stopped with reason \"%s\" at %s\n", event_name, Q_timestamp( TIME_FULL ));
+		fputs( "================================================================================\n", s_ld.logfile );
 		fclose( s_ld.logfile );
 		s_ld.logfile = NULL;
 	}
@@ -261,6 +271,20 @@ static void Sys_PrintStdout( const char *logtime, const char *msg )
 	void IOS_Log( const char * );
 	IOS_Log( buf );
 #endif // TARGET_OS_IOS
+
+#if XASH_NSWITCH && NSWITCH_DEBUG
+	// just spew it to stderr normally in debug mode
+	fprintf( stderr, "%s %s", logtime, buf );
+#endif // XASH_NSWITCH && NSWITCH_DEBUG
+
+#if XASH_PSVITA
+	// spew to stderr only in developer mode
+	if( host_developer.value )
+	{
+		fprintf( stderr, "%s %s", logtime, buf );
+	}
+#endif
+
 #elif !XASH_WIN32 // Wcon does the job
 	Sys_PrintLogfile( STDOUT_FILENO, logtime, msg, XASH_COLORIZE_CONSOLE );
 	Sys_FlushStdout();
@@ -317,15 +341,18 @@ void GAME_EXPORT Con_Printf( const char *szFmt, ... )
 {
 	static char	buffer[MAX_PRINT_MSG];
 	va_list		args;
+	qboolean add_newline;
 
 	if( !host.allow_console )
 		return;
 
 	va_start( args, szFmt );
-	Q_vsnprintf( buffer, sizeof( buffer ), szFmt, args );
+	add_newline = Q_vsnprintf( buffer, sizeof( buffer ), szFmt, args ) < 0;
 	va_end( args );
 
 	Sys_Print( buffer );
+	if( add_newline )
+		Sys_Print( "\n" );
 }
 
 /*
@@ -338,18 +365,21 @@ void GAME_EXPORT Con_DPrintf( const char *szFmt, ... )
 {
 	static char	buffer[MAX_PRINT_MSG];
 	va_list		args;
+	qboolean add_newline;
 
 	if( host_developer.value < DEV_NORMAL )
 		return;
 
 	va_start( args, szFmt );
-	Q_vsnprintf( buffer, sizeof( buffer ), szFmt, args );
+	add_newline = Q_vsnprintf( buffer, sizeof( buffer ), szFmt, args ) < 0;
 	va_end( args );
 
 	if( buffer[0] == '0' && buffer[1] == '\n' && buffer[2] == '\0' )
 		return; // hlrally spam
 
 	Sys_Print( buffer );
+	if( add_newline )
+		Sys_Print( "\n" );
 }
 
 /*
@@ -362,15 +392,18 @@ void Con_Reportf( const char *szFmt, ... )
 {
 	static char	buffer[MAX_PRINT_MSG];
 	va_list		args;
+	qboolean add_newline;
 
 	if( host_developer.value < DEV_EXTENDED )
 		return;
 
 	va_start( args, szFmt );
-	Q_vsnprintf( buffer, sizeof( buffer ), szFmt, args );
+	add_newline = Q_vsnprintf( buffer, sizeof( buffer ), szFmt, args ) < 0;
 	va_end( args );
 
 	Sys_Print( buffer );
+	if( add_newline )
+		Sys_Print( "\n" );
 }
 
 

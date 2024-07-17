@@ -17,20 +17,27 @@ GNU General Public License for more details.
 #define COM_STRINGS_H
 
 // default colored message headers
-#define S_NOTE			"^2Note:^7 "
-#define S_WARN			"^3Warning:^7 "
-#define S_ERROR			"^1Error:^7 "
-#define S_USAGE			"Usage: "
+#define S_BLACK   "^0"
+#define S_RED     "^1"
+#define S_GREEN   "^2"
+#define S_YELLOW  "^3"
+#define S_BLUE    "^4"
+#define S_CYAN    "^5"
+#define S_MAGENTA "^6"
+#define S_DEFAULT "^7"
 
-#define S_OPENGL_NOTE		"^2OpenGL Note:^7 "
-#define S_OPENGL_WARN		"^3OpenGL Warning:^7 "
-#define S_OPENGL_ERROR		"^3OpenGL Error:^7 "
+#define S_NOTE         S_GREEN  "Note: " S_DEFAULT
+#define S_WARN         S_YELLOW "Warning: " S_DEFAULT
+#define S_ERROR        S_RED    "Error: " S_DEFAULT
+#define S_USAGE        "Usage: "
+#define S_USAGE_INDENT "\t"
+
+#define S_OPENGL_NOTE  S_GREEN  "OpenGL Note: " S_DEFAULT
+#define S_OPENGL_WARN  S_YELLOW "OpenGL Warning: " S_DEFAULT
+#define S_OPENGL_ERROR S_RED    "OpenGL Error: " S_DEFAULT
 
 // end game final default message
 #define DEFAULT_ENDGAME_MESSAGE	"The End"
-
-// path to the hash-pak that contain custom player decals
-#define CUSTOM_RES_PATH		"custom.hpk"
 
 // path to default playermodel in GoldSrc
 #define DEFAULT_PLAYER_PATH_HALFLIFE	"models/player.mdl"
@@ -52,7 +59,7 @@ GNU General Public License for more details.
 #define DEFAULT_SAVE_DIRECTORY	"save/"
 
 // fallback to this skybox
-#define DEFAULT_SKYBOX_PATH		"gfx/env/desert"
+#define DEFAULT_SKYBOX_NAME     "desert"
 
 // playlist for startup videos
 #define DEFAULT_VIDEOLIST_PATH	"media/StartupVids.txt"
@@ -64,11 +71,8 @@ GNU General Public License for more details.
 #define DEFAULT_UPDATE_PAGE "https://github.com/FWGS/xash3d-fwgs/releases/latest"
 
 #define XASH_ENGINE_NAME "Xash3D FWGS"
+#define XASH_DEDICATED_SERVER_NAME "XashDS"
 #define XASH_VERSION        "0.20" // engine current version
 #define XASH_COMPAT_VERSION "0.99" // version we are based on
-
-// renderers order is important, software is always a last chance fallback
-#define DEFAULT_RENDERERS { "gl", "gles1", "gles2", "gl4es", "soft" }
-#define DEFAULT_RENDERERS_LEN 5
 
 #endif//COM_STRINGS_H
